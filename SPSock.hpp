@@ -866,7 +866,9 @@ namespace HSLL
         int sockfd;          ///< Socket file descriptor
         unsigned int status; ///< Internal status flags
 
+        static void *exitCtx;                       ///< Event loop exit ctx
         static bool exitFlag;                       ///< Event loop control flag
+        static ExitProc exitProc;                   ///< Event loop exit proc
         static SPSockUdp<address_family> *instance; ///< Singleton instance
 
         /**
@@ -1089,9 +1091,13 @@ namespace HSLL
         /**
          * @brief Configures exit signal handling
          * @param sg Signal number to handle
+         * @param etp Event loop exit Callback
+         * @param ctx Context of ExitProc
          * @return 0 on success, error code on failure
+         * @note All connections are closed when exiting via a signal.
+         * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
          */
-        int SetSignalExit(int sg)
+        int SetSignalExit(int sg, ExitProc etp = nullptr, void *ctx = nullptr)
         {
             struct sigaction sa;
             sa.sa_handler = DealExit;
@@ -1103,6 +1109,9 @@ namespace HSLL
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "sigaction() failed: ", strerror(errno));
                 return 12;
             }
+
+            this->exitProc = etp;
+            this->exitCtx = ctx;
 
             status |= 0x4;
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Exit signal handler configured for signal: ", sg);
@@ -1189,16 +1198,22 @@ namespace HSLL
     bool SPSockTcp<address_family>::exitFlag = true;
 
     template <ADDRESS_FAMILY address_family>
+    bool SPSockUdp<address_family>::exitFlag = true;
+
+    template <ADDRESS_FAMILY address_family>
     void *SPSockTcp<address_family>::exitCtx = nullptr;
+    
+    template <ADDRESS_FAMILY address_family>
+    void *SPSockUdp<address_family>::exitCtx = nullptr;
 
     template <ADDRESS_FAMILY address_family>
     ExitProc SPSockTcp<address_family>::exitProc = nullptr;
 
     template <ADDRESS_FAMILY address_family>
-    SPSockTcp<address_family> *SPSockTcp<address_family>::instance = nullptr;
+    ExitProc SPSockUdp<address_family>::exitProc = nullptr;
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockUdp<address_family>::exitFlag = true;
+    SPSockTcp<address_family> *SPSockTcp<address_family>::instance = nullptr;
 
     template <ADDRESS_FAMILY address_family>
     SPSockUdp<address_family> *SPSockUdp<address_family>::instance = nullptr;
