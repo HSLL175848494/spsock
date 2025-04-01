@@ -230,6 +230,7 @@ namespace HSLL
     typedef void (*ReadProc)(void *ctx);  ///< Read event callback type
     typedef void (*WriteProc)(void *ctx); ///< Write event callback type
     typedef void (*CloseProc)(void *ctx); ///< Connection close callback type
+    typedef void (*ExitProc)(void *ctx);  ///< Event loop Exit callback type
 
     /**
      * @brief Connection callback type
@@ -285,7 +286,7 @@ namespace HSLL
     class SPSockTcp
     {
         linger lin;        ///< Linger configuration
-        SPSockProc proc;   ///< User callbacks
+        SPSockProc proc;   ///< User connections callbacks
         SPSockAlive alive; ///< Keep-alive settings
 
         CloseList list;                            ///< Connection close list
@@ -295,7 +296,9 @@ namespace HSLL
         int epollfd;  ///< Epoll file descriptor
         int listenfd; ///< Listening socket descriptor
 
+        static void *exitCtx;                       ///< Event loop exit ctx
         static bool exitFlag;                       ///< Event loop control flag
+        static ExitProc exitProc;                   ///< Event loop exit proc
         static SPSockTcp<address_family> *instance; ///< Singleton instance
 
         /**
@@ -409,9 +412,14 @@ namespace HSLL
          */
         static void DealExit(int sg)
         {
-            std::cout << "\n";
-            HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Caught signal ", sg, ", exiting event loop");
-            SPSockTcp<address_family>::exitFlag = false;
+            if (SPSockTcp<address_family>::exitFlag)
+            {
+                HSLL_LOGINFO_NOPREFIX(LOG_LEVEL_CRUCIAL,"")
+                HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Caught signal ", sg, ", exiting event loop");
+                if (SPSockTcp<address_family>::exitProc)
+                    SPSockTcp<address_family>::exitProc(SPSockTcp<address_family>::exitCtx);
+                SPSockTcp<address_family>::exitFlag = false;
+            }
         }
 
         /**
@@ -761,9 +769,13 @@ namespace HSLL
         /**
          * @brief Configures exit signal handling
          * @param sg Signal number to handle
+         * @param etp Event loop exit Callback
+         * @param ctx Context of ExitProc
          * @return 0 on success, error code on failure
+         * @note All connections are closed when exiting via a signal.
+         * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
          */
-        int SetSignalExit(int sg)
+        int SetSignalExit(int sg, ExitProc etp = nullptr, void *ctx = nullptr)
         {
             struct sigaction sa;
             sa.sa_handler = DealExit;
@@ -775,6 +787,9 @@ namespace HSLL
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "sigaction() failed: ", strerror(errno));
                 return 12;
             }
+
+            this->exitProc = etp;
+            this->exitCtx = ctx;
 
             status |= 0x4;
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Exit signal handler configured for signal: ", sg);
@@ -848,8 +863,9 @@ namespace HSLL
         void *ctx;    ///< User-defined context for callbacks
         RecvProc rcp; ///< Receive event callback
 
-        int sockfd;                                 ///< Socket file descriptor
-        unsigned int status;                        ///< Internal status flags
+        int sockfd;          ///< Socket file descriptor
+        unsigned int status; ///< Internal status flags
+
         static bool exitFlag;                       ///< Event loop control flag
         static SPSockUdp<address_family> *instance; ///< Singleton instance
 
@@ -871,9 +887,12 @@ namespace HSLL
          */
         static void DealExit(int sg)
         {
-            std::cout << "\n";
-            HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Caught signal ", sg, ", exiting event loop");
-            SPSockUdp<address_family>::exitFlag = false;
+            if (SPSockUdp<address_family>::exitFlag)
+            {
+                HSLL_LOGINFO_NOPREFIX(LOG_LEVEL_CRUCIAL,"")
+                HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Caught signal ", sg, ", exiting event loop");
+                SPSockUdp<address_family>::exitFlag = false;
+            }
         }
 
         /**
@@ -1168,6 +1187,12 @@ namespace HSLL
 
     template <ADDRESS_FAMILY address_family>
     bool SPSockTcp<address_family>::exitFlag = true;
+
+    template <ADDRESS_FAMILY address_family>
+    void *SPSockTcp<address_family>::exitCtx = nullptr;
+
+    template <ADDRESS_FAMILY address_family>
+    ExitProc SPSockTcp<address_family>::exitProc = nullptr;
 
     template <ADDRESS_FAMILY address_family>
     SPSockTcp<address_family> *SPSockTcp<address_family>::instance = nullptr;

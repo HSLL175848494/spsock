@@ -9,7 +9,7 @@
  * @param ... Variadic arguments to log
  */
 #define HSLL_LOGINFO(level, ...) \
-    LogInfo(level, __VA_ARGS__);
+    LogInfo(true, level, __VA_ARGS__);
 
 /**
  * @brief Macro for logging information with specified level and function call
@@ -19,7 +19,7 @@
  */
 #define HSLL_LOGINFO_FUNC(level, func, ...) \
     {                                       \
-        LogInfo(level, __VA_ARGS__);        \
+        LogInfo(true, level, __VA_ARGS__);  \
         func;                               \
     }
 
@@ -29,10 +29,10 @@
  * @param exp Expression to evaluate
  * @param ... Variadic arguments to log
  */
-#define HSLL_LOGINFO_EXP(level, exp, ...) \
-    {                                     \
-        if (exp)                          \
-            LogInfo(level, __VA_ARGS__);  \
+#define HSLL_LOGINFO_EXP(level, exp, ...)      \
+    {                                          \
+        if (exp)                               \
+            LogInfo(true, level, __VA_ARGS__); \
     }
 
 /**
@@ -46,9 +46,19 @@
     {                                                \
         if (exp)                                     \
         {                                            \
-            LogInfo(level, __VA_ARGS__);             \
+            LogInfo(true, level, __VA_ARGS__);       \
             func;                                    \
         }                                            \
+    }
+
+/**
+ * @brief Macro for conditional logging without prefix
+ * @param level Log level to use
+ * @param ... Variadic arguments to log
+ */
+#define HSLL_LOGINFO_NOPREFIX(level, ...)   \
+    {                                       \
+        LogInfo(false, level, __VA_ARGS__); \
     }
 
 namespace HSLL
@@ -64,6 +74,8 @@ namespace HSLL
         LOG_LEVEL_ERROR = 3,   // Error messages
     };
 
+#define HSLL_MIN_LOG_LEVEL LOG_LEVEL_WARNING
+
     /**
      * @brief Utility method for logging information
      * @tparam TS Variadic template parameters
@@ -73,7 +85,7 @@ namespace HSLL
      *       A thread-safe logging library is recommended instead.
      */
     template <class... TS>
-    static void LogInfo(LOG_LEVEL level, TS... ts)
+    static void LogInfo(bool prefix, LOG_LEVEL level, TS... ts)
     {
         constexpr const char *const LevelStr[] = {
             "[INFO]",
@@ -81,16 +93,22 @@ namespace HSLL
             "[CRUCIAL]",
             "[ERROR]"};
 
-#if defined(_NOINFO) || defined(_NOINFO)
+#if defined(_NOINFO) || defined(_NOLOG)
+        return;
+#endif
 
-#elif defined(_DEBUG) || defined(DEBUG_)
-        if (sizeof...(TS))
-            (std::cout << LevelStr[level] << " " << ... << ts) << std::endl;
-#else
-        if (level > LOG_LEVEL_INFO)
+#if !defined(_DEBUG) && !defined(DEBUG_)
+        if (level >= HSLL_MIN_LOG_LEVEL)
         {
+#endif
             if (sizeof...(TS))
-                (std::cout << LevelStr[level] << " " << ... << ts) << std::endl;
+            {
+                if (prefix)
+                    (std::cout << LevelStr[level] << " " << ... << ts) << std::endl;
+                else
+                    (std::cout << ... << ts) << std::endl;
+            }
+#if !defined(_DEBUG) && !defined(DEBUG_)
         }
 #endif
     }
