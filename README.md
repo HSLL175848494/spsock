@@ -59,6 +59,7 @@ if(error_code != 0) {
     std::cerr << tcp->GetLastError(error_code);
 }
 ```
+如果您编译时定义了_DEBUG或DEBUG_宏,调用函数时会打印函数相关调用信息。如图
 
 ## 注意事项
 
