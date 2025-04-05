@@ -14,83 +14,9 @@ HSLL SPSock 是一个基于 C++ 的轻量级高性能网络库，提供 TCP/UDP 
 
 ## 快速开始
 
-### TCP 服务器示例
-
-```cpp
-#include "SPSock.hpp"
-using namespace HSLL;
-
-// 连接上下文结构
-struct ClientContext {
-    // 自定义连接数据
-};
-
-void* OnConnect(SOCKController ctl, const char* ip, unsigned short port) {
-    // 新连接建立时调用
-    auto ctx = new ClientContext;
-    return ctx;
-}
-
-void OnRead(void* ctx) {
-    // 读事件处理
-    char buf[1024];
-    ssize_t ret = static_cast<SOCKController*>(ctx)->Read(buf, sizeof(buf));
-    if(ret > 0) {
-        // 处理数据
-    }
-}
-
-void OnClose(void* ctx) {
-    // 连接关闭时清理
-    delete static_cast<ClientContext*>(ctx);
-}
-
-int main() {
-    auto tcp = SPSockTcp<>::GetInstance();
-    
-    // 基本配置
-    tcp->Listen(8080);
-    tcp->SetCallback(OnRead, nullptr, OnConnect, OnClose);
-    tcp->SetSignalExit(SIGINT);  // Ctrl+C 退出
-    
-    // 启动事件循环
-    tcp->EventLoop();
-    
-    SPSockTcp<>::Release();
-    return 0;
-}
-```
-
-### UDP 服务器示例
-
-```cpp
-#include "SPSock.hpp"
-using namespace HSLL;
-
-void OnRecv(void* ctx, const char* data, ssize_t size, 
-           const char* ip, unsigned short port) {
-    // 接收数据处理
-    auto udp = SPSockUdp<>::GetInstance();
-    udp->SendTo(data, size, ip, port); // 回声服务
-}
-
-int main() {
-    auto udp = SPSockUdp<>::GetInstance();
-    
-    udp->Bind(9090);
-    udp->SetCallback(OnRecv);
-    udp->SetSignalExit(SIGINT);
-    
-    udp->EventLoop();
-    
-    SPSockUdp<>::Release();
-    return 0;
-}
-```
-
 详细用法参照sample
 
-## 核心功能
+## 功能
 
 ### 配置选项
 
