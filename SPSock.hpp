@@ -774,6 +774,7 @@ namespace HSLL
          * @return 0 on success, error code on failure
          * @note All connections are closed when exiting via a signal.
          * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
+         * @note However, etp and ctx will be overwritten the next time the function is called
          */
         int SetSignalExit(int sg, ExitProc etp = nullptr, void *ctx = nullptr)
         {
@@ -1096,6 +1097,7 @@ namespace HSLL
          * @return 0 on success, error code on failure
          * @note All connections are closed when exiting via a signal.
          * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
+         * @note However, etp and ctx will be overwritten the next time the function is called
          */
         int SetSignalExit(int sg, ExitProc etp = nullptr, void *ctx = nullptr)
         {
