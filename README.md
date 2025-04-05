@@ -59,7 +59,7 @@ if(error_code != 0) {
     std::cerr << tcp->GetLastError(error_code);
 }
 ```
-如果您编译时定义了_DEBUG或DEBUG_宏，调用函数时则会打印函数相关调试信息。如图
+如果您预编译时定义了_DEBUG或DEBUG_宏，调用函数时则会打印函数相关调试信息。如图
 
 <img src="https://github.com/user-attachments/assets/fd1c3ec0-e780-4b67-8339-1c502629901f" width="900px">
 
