@@ -60,7 +60,7 @@ if(error_code != 0) {
 }
 ```
 如果您编译时定义了_DEBUG或DEBUG_宏,调用函数时会打印函数相关调用信息。如图
-![image](https://github.com/user-attachments/assets/fd1c3ec0-e780-4b67-8339-1c502629901f)
+<img src="https://github.com/user-attachments/assets/fd1c3ec0-e780-4b67-8339-1c502629901f" width="210px">
 
 
 ## 注意事项
