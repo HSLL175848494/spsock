@@ -65,7 +65,8 @@ if(error_code != 0) {
 1. **单例模式**：通过 `GetInstance()` 获取实例，使用后必须调用 `Release()`
 2. **线程安全**：`EventLoop()` 应在主线程运行，I/O 操作支持多线程
 3. **资源管理**：连接关闭时必须通过 `Close()` 方法
-4. **性能调优**：适当调整宏定义：
+4. **事件接收**：每次读写回调触发必须调用 `SOCKController`的`EnableEvent()`方法以接收下一次回调
+5. **性能调优**：适当调整宏定义：
    ```cpp
    #define SPSOCK_MAX_EVENT_BSIZE 10000  // 最大处理事件数
    #define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS 500  // epoll 超时
