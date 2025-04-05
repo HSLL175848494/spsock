@@ -87,11 +87,19 @@ namespace HSLL
     template <class... TS>
     static void LogInfo(bool prefix, LOG_LEVEL level, TS... ts)
     {
+#ifdef _WIN32
         constexpr const char *const LevelStr[] = {
-            "[INFO]",
-            "[WARNING]",
-            "[CRUCIAL]",
-            "[ERROR]"};
+            "[INFO] ",
+            "[WARNING] ",
+            "[CRUCIAL] ",
+            "[ERROR] "};
+#else
+        constexpr const char *const LevelStr[] = {
+            "\033[92m[INFO]\033[0m ",
+            "\033[93m[WARNING]\033[0m ",
+            "\033[95m[CRUCIAL]\033[0m ",
+            "\033[91m[ERROR]\033[0m "};
+#endif
 
 #if defined(_NOINFO) || defined(_NOLOG)
         return;
