@@ -63,7 +63,8 @@ if(error_code != 0) {
     std::cerr << tcp->GetLastError(error_code);
 }
 ```
-如果您预定义了_DEBUG或DEBUG_宏，调用函数时则会打印函数相关日志信息
+如果您预定义了_DEBUG或DEBUG_宏，控制台则会打印相关日志信息
+当然您可以通过更改`Log.hpp`内LogInfo函数的定义来改变日志打印方式(日志打印必须线程安全)
 
 <img src="https://github.com/user-attachments/assets/fd1c3ec0-e780-4b67-8339-1c502629901f" width="900px">
 
