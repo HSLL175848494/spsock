@@ -14,7 +14,11 @@ SPSock 是一个基于 C++ 的轻量级网络库，提供 TCP/UDP 套接字封�
 
 ## 快速开始
 
-详细用法参照sample
+#### 引入
+放置`Log.hpp`与`SPSock.hpp`于同级目录并包含`SPSock.hpp`
+
+#### 代码演示
+见sample
 
 ## 功能
 
