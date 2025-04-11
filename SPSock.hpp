@@ -5,6 +5,7 @@
 #include <set>
 #include <list>
 #include <mutex>
+#include <atomic>
 #include <fcntl.h>
 #include <cstring>
 #include <signal.h>
@@ -297,8 +298,8 @@ namespace HSLL
         int listenfd; ///< Listening socket descriptor
 
         static void *exitCtx;                       ///< Event loop exit ctx
-        static bool exitFlag;                       ///< Event loop control flag
         static ExitProc exitProc;                   ///< Event loop exit proc
+        static std::atomic<bool> exitFlag;           ///< Event loop control flag
         static SPSockTcp<address_family> *instance; ///< Singleton instance
 
         /**
@@ -414,11 +415,11 @@ namespace HSLL
         {
             if (SPSockTcp<address_family>::exitFlag)
             {
-                HSLL_LOGINFO_NOPREFIX(LOG_LEVEL_CRUCIAL,"")
+                HSLL_LOGINFO_NOPREFIX(LOG_LEVEL_CRUCIAL, "")
                 HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Caught signal ", sg, ", exiting event loop");
                 if (SPSockTcp<address_family>::exitProc)
                     SPSockTcp<address_family>::exitProc(SPSockTcp<address_family>::exitCtx);
-                SPSockTcp<address_family>::exitFlag = false;
+                SPSockTcp<address_family>::exitFlag.store(false,std::memory_order_release);
             }
         }
 
@@ -637,7 +638,7 @@ namespace HSLL
 
             HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop started");
 
-            while (exitFlag)
+            while (exitFlag.load(std::memory_order_acquire))
             {
                 int nfds = epoll_wait(epollfd, events, SPSOCK_MAX_EVENT_BSIZE, SPSOCK_EPOLL_TIMEOUT_MILLISECONDS);
                 if (nfds == -1)
@@ -774,7 +775,6 @@ namespace HSLL
          * @return 0 on success, error code on failure
          * @note All connections are closed when exiting via a signal.
          * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
-         * @note However, etp and ctx will be overwritten the next time the function is called
          */
         int SetSignalExit(int sg, ExitProc etp = nullptr, void *ctx = nullptr)
         {
@@ -803,7 +803,7 @@ namespace HSLL
          */
         static void SetExitFlag()
         {
-            exitFlag = false;
+            exitFlag.store(false,std::memory_order_release);
         }
 
         /**
@@ -831,7 +831,7 @@ namespace HSLL
             listenfd = -1;
             lin = {0, 0};
             alive = {1, 120, 3, 10};
-            exitFlag = true;
+            exitFlag.store(true,std::memory_order_release);
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance reset successfully");
         }
 
@@ -868,8 +868,8 @@ namespace HSLL
         unsigned int status; ///< Internal status flags
 
         static void *exitCtx;                       ///< Event loop exit ctx
-        static bool exitFlag;                       ///< Event loop control flag
         static ExitProc exitProc;                   ///< Event loop exit proc
+        static std::atomic<bool> exitFlag;           ///< Event loop control flag
         static SPSockUdp<address_family> *instance; ///< Singleton instance
 
         /**
@@ -892,9 +892,9 @@ namespace HSLL
         {
             if (SPSockUdp<address_family>::exitFlag)
             {
-                HSLL_LOGINFO_NOPREFIX(LOG_LEVEL_CRUCIAL,"")
+                HSLL_LOGINFO_NOPREFIX(LOG_LEVEL_CRUCIAL, "")
                 HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Caught signal ", sg, ", exiting event loop");
-                SPSockUdp<address_family>::exitFlag = false;
+                SPSockUdp<address_family>::exitFlag.store(false,std::memory_order_release);
             }
         }
 
@@ -999,7 +999,7 @@ namespace HSLL
             socklen_t addrlen = sizeof(addr);
 
             HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop started");
-            while (exitFlag)
+            while (exitFlag.load(std::memory_order_acquire))
             {
                 ssize_t bytes = recvfrom(sockfd, buf, UDP_MAX_BSIZE, 0, (sockaddr *)&addr, &addrlen);
 
@@ -1097,7 +1097,6 @@ namespace HSLL
          * @return 0 on success, error code on failure
          * @note All connections are closed when exiting via a signal.
          * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
-         * @note However, etp and ctx will be overwritten the next time the function is called
          */
         int SetSignalExit(int sg, ExitProc etp = nullptr, void *ctx = nullptr)
         {
@@ -1146,7 +1145,7 @@ namespace HSLL
          */
         static void SetExitFlag()
         {
-            exitFlag = false;
+            exitFlag.store(false,std::memory_order_release);
         }
 
         /**
@@ -1171,7 +1170,7 @@ namespace HSLL
             Clean();
             sockfd = -1;
             status = 0;
-            exitFlag = true;
+            exitFlag.store(true,std::memory_order_release);
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance reset successfully");
         }
 
@@ -1197,14 +1196,14 @@ namespace HSLL
     unsigned int SOCKADDR_IN<ADDRESS_FAMILY_INET6>::UDP_MAX_BSIZE = 65527;
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockTcp<address_family>::exitFlag = true;
+    std::atomic<bool> SPSockTcp<address_family>::exitFlag = true;
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockUdp<address_family>::exitFlag = true;
+    std::atomic<bool> SPSockUdp<address_family>::exitFlag = true;
 
     template <ADDRESS_FAMILY address_family>
     void *SPSockTcp<address_family>::exitCtx = nullptr;
-    
+
     template <ADDRESS_FAMILY address_family>
     void *SPSockUdp<address_family>::exitCtx = nullptr;
 
