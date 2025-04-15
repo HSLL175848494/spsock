@@ -67,7 +67,9 @@ if(error_code != 0) {
 
 如果您预定义了_DEBUG或DEBUG_宏，控制台则会打印所有日志信息
 
+
 <img src="https://github.com/user-attachments/assets/fd1c3ec0-e780-4b67-8339-1c502629901f" width="900px">
+
 
 如果您预定义了_NOLOG或NOLOG_宏，则所有日志信息均不打印
 
