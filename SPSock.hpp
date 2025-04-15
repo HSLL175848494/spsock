@@ -15,7 +15,7 @@
 #include <sys/socket.h>
 #include <netinet/tcp.h>
 
-#include "Log.hpp"
+#include "SPLog.hpp"
 
 namespace HSLL
 {
@@ -299,7 +299,7 @@ namespace HSLL
 
         static void *exitCtx;                       ///< Event loop exit ctx
         static ExitProc exitProc;                   ///< Event loop exit proc
-        static std::atomic<bool> exitFlag;           ///< Event loop control flag
+        static std::atomic<bool> exitFlag;          ///< Event loop control flag
         static SPSockTcp<address_family> *instance; ///< Singleton instance
 
         /**
@@ -355,14 +355,10 @@ namespace HSLL
             }
 
             if (alive.keepAlive)
-            {
                 SetKeepAlive(fd);
-            }
 
             if (lin.l_onoff)
-            {
                 SetLinger(fd);
-            }
 
             int flags = fcntl(fd, F_GETFL);
             if (flags == -1)
@@ -371,6 +367,7 @@ namespace HSLL
                 close(fd);
                 return;
             }
+
             if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
             {
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "fcntl(F_SETFL) failed: ", strerror(errno));
@@ -419,7 +416,7 @@ namespace HSLL
                 HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Caught signal ", sg, ", exiting event loop");
                 if (SPSockTcp<address_family>::exitProc)
                     SPSockTcp<address_family>::exitProc(SPSockTcp<address_family>::exitCtx);
-                SPSockTcp<address_family>::exitFlag.store(false,std::memory_order_release);
+                SPSockTcp<address_family>::exitFlag.store(false, std::memory_order_release);
             }
         }
 
@@ -449,19 +446,16 @@ namespace HSLL
             epoll_event event;
             event.data.fd = fd;
             event.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLONESHOT;
+
             if (read)
-            {
                 event.events |= EPOLLIN;
-            }
+
             if (write)
-            {
                 event.events |= EPOLLOUT;
-            }
+
             if (epoll_ctl(This->epollfd, EPOLL_CTL_MOD, fd, &event) != 0)
-            {
-                HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_ctl(EPOLL_CTL_MOD) failed: ", strerror(errno));
                 return false;
-            }
+
             return true;
         }
 
@@ -473,9 +467,8 @@ namespace HSLL
         std::string CloseConnection(int fd)
         {
             if (epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, nullptr) != 0)
-            {
                 HSLL_LOGINFO(LOG_LEVEL_WARNING, "epoll_ctl(EPOLL_CTL_DEL) failed: ", strerror(errno));
-            }
+
             ConnectionInfo cInfo = connections.at(fd);
             std::string info = std::move(cInfo.info);
             connections.erase(fd);
@@ -492,9 +485,8 @@ namespace HSLL
             for (auto &it : connections)
             {
                 if (epoll_ctl(epollfd, EPOLL_CTL_DEL, it.first, nullptr) != 0)
-                {
                     HSLL_LOGINFO(LOG_LEVEL_WARNING, "epoll_ctl(EPOLL_CTL_DEL) failed: ", strerror(errno));
-                }
+
                 proc.csp(it.second.ctx);
                 close(it.first);
                 HSLL_LOGINFO(LOG_LEVEL_INFO, "Closed connection: ", it.second.info);
@@ -528,9 +520,8 @@ namespace HSLL
         static SPSockTcp *GetInstance()
         {
             if (instance == nullptr)
-            {
                 instance = new SPSockTcp;
-            }
+
             return instance;
         }
 
@@ -614,9 +605,7 @@ namespace HSLL
             }
 
             if ((status & 0x4) != 0x4)
-            {
                 HSLL_LOGINFO(LOG_LEVEL_WARNING, "Exit signal handler not configured");
-            }
 
             epoll_event event;
             epoll_event events[SPSOCK_MAX_EVENT_BSIZE];
@@ -670,10 +659,10 @@ namespace HSLL
                 for (int i = 0; i < nfds; i++)
                 {
                     int fd = events[i].data.fd;
+
                     if (ignore.find(fd) != ignore.end())
-                    {
                         continue;
-                    }
+
                     if (fd == listenfd)
                     {
                         DealConnect();
@@ -711,11 +700,13 @@ namespace HSLL
                 lin.l_onoff = 0;
                 return 0;
             }
+
             if (waitSeconds <= 0)
             {
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "Invalid parameter: waitSeconds must be positive");
                 return 1;
             }
+
             lin = {1, waitSeconds};
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Linger ", enable ? "enabled" : "disabled");
             return 0;
@@ -736,11 +727,13 @@ namespace HSLL
                 alive.keepAlive = 0;
                 return 0;
             }
+
             if (aliveSeconds <= 0 || detectTimes <= 0 || detectInterval <= 0)
             {
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "Invalid parameter: aliveSeconds, detectTimes, and detectInterval must be positive");
                 return 1;
             }
+
             alive = {1, aliveSeconds, detectTimes, detectInterval};
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Keep-alive ", enable ? "enabled" : "disabled");
             return 0;
@@ -803,7 +796,7 @@ namespace HSLL
          */
         static void SetExitFlag()
         {
-            exitFlag.store(false,std::memory_order_release);
+            exitFlag.store(false, std::memory_order_release);
         }
 
         /**
@@ -831,7 +824,7 @@ namespace HSLL
             listenfd = -1;
             lin = {0, 0};
             alive = {1, 120, 3, 10};
-            exitFlag.store(true,std::memory_order_release);
+            exitFlag.store(true, std::memory_order_release);
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance reset successfully");
         }
 
@@ -840,12 +833,11 @@ namespace HSLL
          * @param code Error code index
          * @return Corresponding error string
          */
-        const char *GetLastError(unsigned int code)
+        const char *GetErrorStr(unsigned int code)
         {
             if (code < sizeof(SPSockErrors) / sizeof(SPSockErrors[0]))
-            {
                 return SPSockErrors[code];
-            }
+
             return "Unknown error";
         }
 
@@ -869,7 +861,7 @@ namespace HSLL
 
         static void *exitCtx;                       ///< Event loop exit ctx
         static ExitProc exitProc;                   ///< Event loop exit proc
-        static std::atomic<bool> exitFlag;           ///< Event loop control flag
+        static std::atomic<bool> exitFlag;          ///< Event loop control flag
         static SPSockUdp<address_family> *instance; ///< Singleton instance
 
         /**
@@ -894,7 +886,7 @@ namespace HSLL
             {
                 HSLL_LOGINFO_NOPREFIX(LOG_LEVEL_CRUCIAL, "")
                 HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Caught signal ", sg, ", exiting event loop");
-                SPSockUdp<address_family>::exitFlag.store(false,std::memory_order_release);
+                SPSockUdp<address_family>::exitFlag.store(false, std::memory_order_release);
             }
         }
 
@@ -912,9 +904,8 @@ namespace HSLL
         static SPSockUdp *GetInstance()
         {
             if (instance == nullptr)
-            {
                 instance = new SPSockUdp;
-            }
+
             return instance;
         }
 
@@ -1132,6 +1123,7 @@ namespace HSLL
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "Invalid parameter: callback cannot be nullptr");
                 return 1;
             }
+
             this->rcp = rcp;
             this->ctx = ctx;
             status |= 0x2;
@@ -1145,7 +1137,7 @@ namespace HSLL
          */
         static void SetExitFlag()
         {
-            exitFlag.store(false,std::memory_order_release);
+            exitFlag.store(false, std::memory_order_release);
         }
 
         /**
@@ -1159,6 +1151,7 @@ namespace HSLL
                 delete instance;
                 instance = nullptr;
             }
+
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance released successfully");
         }
 
@@ -1170,7 +1163,7 @@ namespace HSLL
             Clean();
             sockfd = -1;
             status = 0;
-            exitFlag.store(true,std::memory_order_release);
+            exitFlag.store(true, std::memory_order_release);
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance reset successfully");
         }
 
@@ -1179,12 +1172,11 @@ namespace HSLL
          * @param code Error code index
          * @return Corresponding error string
          */
-        const char *GetLastError(unsigned int code)
+        const char *GetErrorStr(unsigned int code)
         {
             if (code < sizeof(SPSockErrors) / sizeof(SPSockErrors[0]))
-            {
                 return SPSockErrors[code];
-            }
+
             return "Unknown error";
         }
 
