@@ -14,11 +14,8 @@ SPSock 提供了TCP/UDP 套接字封装，支持 IPv4/IPv6 双协议栈。主要
 
 ## 快速开始
 
-### 引入
-将`Log.hpp`与`SPSock.hpp`放置于同级目录。引入头文件`SPSock.hpp`
-
-### 使用
-见sample
+引入: 将`SPLog.hpp`与`SPSock.hpp`置于同级目录。引入头文件`SPSock.hpp`
+使用: 见sample
 
 ## 功能
 
@@ -63,11 +60,15 @@ if(error_code != 0) {
     std::cerr << tcp->GetLastError(error_code);
 }
 ```
-如果您预定义了_DEBUG或DEBUG_宏，控制台则会打印相关日志信息
+## 日志
+
+正常情况下控制台会打印log级别大于等于LOG_LEVEL_WARNING的信息(可通过修改`HSLL_MIN_LOG_LEVEL`定义更改)
+
+如果您预定义了_DEBUG或DEBUG_宏，控制台则会打印所有日志信息
 
 <img src="https://github.com/user-attachments/assets/fd1c3ec0-e780-4b67-8339-1c502629901f" width="900px">
 
-当然您也可以通过更改`Log.hpp`内LogInfo函数的定义来改变日志打印方式(日志打印必须线程安全)
+如果您预定义了_NOLOG或NOLOG_宏，则所有日志信息均不打印
 
 ## 注意事项
 
