@@ -105,7 +105,7 @@ namespace HSLL
             if (sizeof...(TS))
             {
                 if (prefix)
-                    (std::cout << LevelStr[level] << " " << ... << ts) << std::endl;
+                    (std::cout << LevelStr[level]<< ... << ts) << std::endl;
                 else
                     (std::cout << ... << ts) << std::endl;
             }
