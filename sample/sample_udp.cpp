@@ -15,7 +15,7 @@ int main()
     if (ins->Bind(4567) != 0)
         return -1;
 
-    if (ins->SetCallback(echo_rcp, ins) != 0)
+    if (ins->SetCallback(echo_rcp, ins))
         return -1;
 
     if (ins->SetSignalExit(SIGINT) != 0)

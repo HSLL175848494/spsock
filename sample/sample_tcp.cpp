@@ -1,5 +1,5 @@
-#include "SPSock.hpp"
 
+#include "SPSock.hpp"
 using namespace HSLL;
 
 class EchoServer
@@ -88,7 +88,7 @@ int main()
         return -1;
     if (ins->EnableLinger(true, 5) != 0)
         return -1;
-    if (ins->SetCallback(echo_rdp, echo_wtp, echo_cnp, echo_csp) != 0)
+    if (ins->SetCallback(echo_cnp, echo_csp, echo_rdp, echo_wtp) != 0)
         return -1;
     if (ins->SetSignalExit(SIGINT) != 0)
         return -1;
