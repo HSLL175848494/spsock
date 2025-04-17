@@ -4,8 +4,6 @@
 #include <map>
 #include <set>
 #include <list>
-#include <mutex>
-#include <atomic>
 #include <fcntl.h>
 #include <cstring>
 #include <signal.h>
@@ -16,6 +14,7 @@
 #include <netinet/tcp.h>
 
 #include "SPLog.hpp"
+#include "SPTask.hpp"
 
 namespace HSLL
 {
@@ -31,7 +30,7 @@ namespace HSLL
 
 #define SPSOCK_ONE_TIME_CALL                   ///< Marks functions that should only be called once
 #define SPSOCK_MAX_EVENT_BSIZE 5000            ///< Maximum events processed per epoll cycle
-#define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS 1000 ///< Epoll wait timeout in milliseconds
+#define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS -1   ///< Epoll wait timeout in milliseconds,default infinite
 
     /**
      * @brief Protocol types for socket creation
@@ -126,6 +125,7 @@ namespace HSLL
         "SetCallback() not called",                 // 14
         "Function cannot be called multiple times", // 15
         "Bind() not called"                         // 16
+        "ThreadPool init error"                     // 17
     };
 
     /**
@@ -230,6 +230,7 @@ namespace HSLL
 
     typedef void (*ReadProc)(void *ctx);  ///< Read event callback type
     typedef void (*WriteProc)(void *ctx); ///< Write event callback type
+
     typedef void (*CloseProc)(void *ctx); ///< Connection close callback type
     typedef void (*ExitProc)(void *ctx);  ///< Event loop Exit callback type
 
@@ -400,9 +401,10 @@ namespace HSLL
             }
 
             std::string info = "[" + std::string(ip) + "]:" + std::to_string(port);
+            HSLL_LOGINFO(LOG_LEVEL_INFO, "Accepted new connection from: ", info);
+
             void *ctx = proc.cnp(SOCKController(fd, this, FuncClose, FuncEnableEvent), ip, port);
             connections.insert({fd, {ctx, info}});
-            HSLL_LOGINFO(LOG_LEVEL_INFO, "Accepted new connection from: ", info);
         }
 
         /**
@@ -472,7 +474,10 @@ namespace HSLL
             ConnectionInfo cInfo = connections.at(fd);
             std::string info = std::move(cInfo.info);
             connections.erase(fd);
-            proc.csp(cInfo.ctx);
+
+            if (proc.csp)
+                proc.csp(cInfo.ctx);
+
             close(fd);
             return info;
         }
@@ -482,27 +487,29 @@ namespace HSLL
          */
         void Clean()
         {
-            for (auto &it : connections)
+            if ((status & 0x8) == 0x8)
             {
-                if (epoll_ctl(epollfd, EPOLL_CTL_DEL, it.first, nullptr) != 0)
-                    HSLL_LOGINFO(LOG_LEVEL_WARNING, "epoll_ctl(EPOLL_CTL_DEL) failed: ", strerror(errno));
+                for (auto &it : connections)
+                {
+                    if (epoll_ctl(epollfd, EPOLL_CTL_DEL, it.first, nullptr) != 0)
+                        HSLL_LOGINFO(LOG_LEVEL_WARNING, "epoll_ctl(EPOLL_CTL_DEL) failed: ", strerror(errno));
 
-                proc.csp(it.second.ctx);
-                close(it.first);
-                HSLL_LOGINFO(LOG_LEVEL_INFO, "Closed connection: ", it.second.info);
+                    if (proc.csp)
+                        proc.csp(it.second.ctx);
+
+                    close(it.first);
+                    HSLL_LOGINFO(LOG_LEVEL_INFO, "Closed connection: ", it.second.info);
+                }
+
+                close(epollfd);
+                epollfd = -1;
+                connections.clear();
             }
-            connections.clear();
 
             if (listenfd != -1)
             {
                 close(listenfd);
                 listenfd = -1;
-            }
-
-            if (epollfd != -1)
-            {
-                close(epollfd);
-                epollfd = -1;
             }
         }
 
@@ -581,11 +588,19 @@ namespace HSLL
 
         /**
          * @brief Main event processing loop
+         * @param policy Full load strategy,wait or abandon
          * @return 0 on success, error code on failure
          * @note One-time call function
          */
-        int EventLoop() SPSOCK_ONE_TIME_CALL
+        int EventLoop(FULL_LOAD_POLICY policy = FULL_LOAD_POLICY_ABANDON) SPSOCK_ONE_TIME_CALL
         {
+            static_assert(SPSOCK_THREADPOOL_QUEUE_LENGTH > 0);
+            static_assert(SPSOCK_THREADPOOL_DEFAULT_THREADS_NUM > 0);
+            static_assert(SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT > 0);
+            static_assert(SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS > 0);
+            static_assert(SPSOCK_MAX_EVENT_BSIZE > 0);
+            static_assert(SPSOCK_EPOLL_TIMEOUT_MILLISECONDS > 0 || SPSOCK_EPOLL_TIMEOUT_MILLISECONDS == -1);
+
             if ((status & 0x8) == 0x8)
             {
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "EventLoop() cannot be called multiple times");
@@ -625,6 +640,28 @@ namespace HSLL
                 return 10;
             }
 
+            long cores = sysconf(_SC_NPROCESSORS_ONLN);
+            if (cores == -1)
+            {
+                cores = SPSOCK_THREADPOOL_DEFAULT_THREADS_NUM;
+                HSLL_LOGINFO(LOG_LEVEL_WARNING, "Failed to get the number of CPU cores, set to default: ", cores);
+            }
+
+            ThreadPool<SockTask> pool;
+
+            if (pool.init(SPSOCK_THREADPOOL_QUEUE_LENGTH, cores, SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS) == false)
+            {
+                close(epollfd);
+                epollfd = -1;
+                HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to initialize thread pool: There is not enough memory space");
+                return 17;
+            }
+
+            UtilTask<bool(SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT - 1)>::type UtilTask;
+            UtilTask.pool = &pool;
+            UtilTask.policy = policy;
+            std::set<int> ignore;
+
             HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop started");
 
             while (exitFlag.load(std::memory_order_acquire))
@@ -633,15 +670,13 @@ namespace HSLL
                 if (nfds == -1)
                 {
                     if (errno == EINTR)
-                    {
                         continue;
-                    }
+
                     HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_wait() failed: ", strerror(errno));
                     status |= 0x8;
                     return 11;
                 }
 
-                std::set<int> ignore;
                 {
                     std::lock_guard<std::mutex> lock(list.mtx);
                     while (!list.connections.empty())
@@ -649,9 +684,8 @@ namespace HSLL
                         int fd = list.connections.front();
                         list.connections.pop_front();
                         if (connections.find(fd) != connections.end())
-                        {
                             HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(fd));
-                        }
+
                         ignore.insert(fd);
                     }
                 }
@@ -673,13 +707,18 @@ namespace HSLL
                     }
                     else if (events[i].events & EPOLLIN)
                     {
-                        proc.rdp(connections.at(fd).ctx);
+                        if (proc.rdp)
+                            UtilTask.append(connections.at(fd).ctx, proc.rdp);
                     }
                     else if (events[i].events & EPOLLOUT)
                     {
-                        proc.wtp(connections.at(fd).ctx);
+                        if (proc.wtp)
+                            UtilTask.append(connections.at(fd).ctx, proc.wtp);
                     }
                 }
+
+                UtilTask.submit();
+                ignore.clear();
             }
 
             status |= 0x8;
@@ -741,17 +780,17 @@ namespace HSLL
 
         /**
          * @brief Sets user-defined callbacks
-         * @param rdp Read event callback
-         * @param wtp Write event callback
          * @param cnp New connection callback
          * @param csp Close event callback
+         * @param rdp Read event callback
+         * @param wtp Write event callback
          * @return 0 on success, error code on failure
          */
-        int SetCallback(ReadProc rdp, WriteProc wtp, ConnectProc cnp, CloseProc csp)
+        int SetCallback(ConnectProc cnp, CloseProc csp = nullptr, ReadProc rdp = nullptr, WriteProc wtp = nullptr)
         {
-            if (rdp == nullptr || wtp == nullptr || cnp == nullptr || csp == nullptr)
+            if (cnp == nullptr)
             {
-                HSLL_LOGINFO(LOG_LEVEL_ERROR, "Invalid parameter: callbacks cannot be nullptr");
+                HSLL_LOGINFO(LOG_LEVEL_ERROR, "Invalid parameter: ConnectProc cannot be nullptr");
                 return 1;
             }
             proc = {rdp, wtp, cnp, csp};
@@ -811,21 +850,6 @@ namespace HSLL
                 instance = nullptr;
             }
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance released successfully");
-        }
-
-        /**
-         * @brief Resets instance to initial state
-         */
-        void Reset()
-        {
-            Clean();
-            status = 0;
-            epollfd = -1;
-            listenfd = -1;
-            lin = {0, 0};
-            alive = {1, 120, 3, 10};
-            exitFlag.store(true, std::memory_order_release);
-            HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance reset successfully");
         }
 
         /**
@@ -956,10 +980,11 @@ namespace HSLL
 
         /**
          * @brief Main event processing loop for UDP
+         * @param policy full load policy
          * @return 0 on success, error code on failure
          * @note One-time call function
          */
-        int EventLoop() SPSOCK_ONE_TIME_CALL
+        int EventLoop(FULL_LOAD_POLICY policy = FULL_LOAD_POLICY_ABANDON) SPSOCK_ONE_TIME_CALL
         {
             if ((status & 0x8) == 0x8)
             {
@@ -999,7 +1024,7 @@ namespace HSLL
                     if (errno == EINTR)
                         continue;
 
-                    HSLL_LOGINFO_FUNC(LOG_LEVEL_ERROR, "recvfrom() failed: ", strerror(errno));
+                    HSLL_LOGINFO(LOG_LEVEL_ERROR, "recvfrom() failed: ", strerror(errno));
                     status |= 0x8;
                     return 7;
                 }
@@ -1120,7 +1145,7 @@ namespace HSLL
         {
             if (rcp == nullptr)
             {
-                HSLL_LOGINFO(LOG_LEVEL_ERROR, "Invalid parameter: callback cannot be nullptr");
+                HSLL_LOGINFO(LOG_LEVEL_ERROR, "Invalid parameter: RecvProc cannot be nullptr");
                 return 1;
             }
 
@@ -1153,18 +1178,6 @@ namespace HSLL
             }
 
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance released successfully");
-        }
-
-        /**
-         * @brief Resets instance to initial state
-         */
-        void Reset()
-        {
-            Clean();
-            sockfd = -1;
-            status = 0;
-            exitFlag.store(true, std::memory_order_release);
-            HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance reset successfully");
         }
 
         /**
