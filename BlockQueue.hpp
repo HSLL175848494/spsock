@@ -394,8 +394,8 @@ namespace HSLL
 		 */
 		unsigned int pushBulk(const TYPE *elements, unsigned int count)
 		{
-			if(count==0)
-			return 0;
+			if (count == 0)
+				return 0;
 
 			std::unique_lock<std::mutex> freeLock(freeListMutex);
 			Node *head = allocateNodesUnsafe(count);
@@ -442,7 +442,7 @@ namespace HSLL
 		 */
 		unsigned int wait_pushBulk(const TYPE *elements, unsigned int count)
 		{
-			if (count==0||isStopped.load(std::memory_order_acquire))
+			if (count == 0 || isStopped.load(std::memory_order_acquire))
 				return 0;
 
 			unsigned int pushed = 0;
@@ -518,8 +518,8 @@ namespace HSLL
 		template <class Rep, class Period>
 		unsigned int wait_pushBulk(const TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
-			if(count==0)
-			return 0;
+			if (count == 0)
+				return 0;
 
 			auto deadline = std::chrono::steady_clock::now() + timeout;
 			unsigned int pushed = 0;
@@ -590,8 +590,8 @@ namespace HSLL
 		 */
 		unsigned int popBulk(TYPE *elements, unsigned int count)
 		{
-			if(count==0)
-			return 0;
+			if (count == 0)
+				return 0;
 
 			Node *head = nullptr;
 			Node *tail = nullptr;
@@ -646,10 +646,11 @@ namespace HSLL
 		 */
 		unsigned int wait_popBulk(TYPE *elements, unsigned int count)
 		{
-			if (count==0||isStopped.load(std::memory_order_acquire))
+			if (count == 0 || isStopped.load(std::memory_order_acquire))
 				return 0;
 
 			Node *head = nullptr;
+			Node *tail = nullptr;
 			unsigned int allocated = 0;
 
 			{
@@ -661,15 +662,16 @@ namespace HSLL
 					return 0;
 
 				head = dataListHead;
-				Node *current = head;
+				tail = head;
 				allocated = 1;
-				while (current->next && allocated < count)
+
+				while (tail->next && allocated < count)
 				{
-					current = current->next;
+					tail = tail->next;
 					allocated++;
 				}
 
-				dataListHead = current->next;
+				dataListHead = tail->next;
 				if (dataListHead)
 					dataListHead->prev = nullptr;
 				else
@@ -686,7 +688,7 @@ namespace HSLL
 
 			{
 				std::lock_guard<std::mutex> lock(freeListMutex);
-				recycleNodesUnsafe(head, current ? current->prev : head);
+				recycleNodesUnsafe(head, tail);
 			}
 
 			notFullCond.notify_all();
@@ -707,31 +709,35 @@ namespace HSLL
 		template <class Rep, class Period>
 		unsigned int wait_popBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
-			if(count==0)
-			return 0;
+			if (count == 0)
+				return 0;
 
 			Node *head = nullptr;
+			Node *tail = nullptr;
 			unsigned int allocated = 0;
 
 			{
 				std::unique_lock<std::mutex> lock(dataMutex);
 				if (!notEmptyCond.wait_for(lock, timeout, [this]
 										   { return isStopped.load(std::memory_order_acquire) || dataListHead; }))
+				{
 					return 0;
+				}
 
 				if (!dataListHead)
 					return 0;
 
 				head = dataListHead;
-				Node *current = head;
+				tail = head;
 				allocated = 1;
-				while (current->next && allocated < count)
+
+				while (tail->next && allocated < count)
 				{
-					current = current->next;
+					tail = tail->next;
 					allocated++;
 				}
 
-				dataListHead = current->next;
+				dataListHead = tail->next;
 				if (dataListHead)
 					dataListHead->prev = nullptr;
 				else
@@ -748,7 +754,7 @@ namespace HSLL
 
 			{
 				std::lock_guard<std::mutex> lock(freeListMutex);
-				recycleNodesUnsafe(head, current ? current->prev : head);
+				recycleNodesUnsafe(head, tail);
 			}
 
 			notFullCond.notify_all();
