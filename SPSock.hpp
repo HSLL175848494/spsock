@@ -28,9 +28,9 @@ namespace HSLL
     cName &operator=(const cName &) = delete; \
     cName &operator=(cName &&) = delete;
 
-#define SPSOCK_ONE_TIME_CALL                   ///< Marks functions that should only be called once
-#define SPSOCK_MAX_EVENT_BSIZE 5000            ///< Maximum events processed per epoll cycle
-#define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS -1   ///< Epoll wait timeout in milliseconds,default infinite
+#define SPSOCK_ONE_TIME_CALL                 ///< Marks functions that should only be called once
+#define SPSOCK_MAX_EVENT_BSIZE 5000          ///< Maximum events processed per epoll cycle
+#define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS -1 ///< Epoll wait timeout in milliseconds,default infinite
 
     /**
      * @brief Protocol types for socket creation
@@ -555,9 +555,10 @@ namespace HSLL
             }
 
             int reuse = 1;
-            if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) == -1)
+            if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == -1 ||
+                setsockopt(listenfd, SOL_SOCKET, SO_REUSEPORT, &reuse, sizeof(reuse)) == -1)
             {
-                HSLL_LOGINFO(LOG_LEVEL_ERROR, "setsockopt(SO_REUSEPORT) failed: ", strerror(errno));
+                HSLL_LOGINFO(LOG_LEVEL_ERROR, "setsockopt(SO_REUSEPORT|SO_REUSEADDR) failed: ", strerror(errno));
                 close(listenfd);
                 listenfd = -1;
                 return 3;
