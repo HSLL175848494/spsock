@@ -14,9 +14,7 @@ SPSock 提供了TCP/UDP 套接字封装，支持 IPv4/IPv6 双协议栈。主要
 
 ## 快速开始
 
-引入:  将`SPLog.hpp`与`SPSock.hpp`置于同级目录。引入头文件`SPSock.hpp`
-
-使用:  见sample
+见sample
 
 ## 功能
 
