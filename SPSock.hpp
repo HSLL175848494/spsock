@@ -230,7 +230,6 @@ namespace HSLL
 
     typedef void (*ReadProc)(void *ctx);  ///< Read event callback type
     typedef void (*WriteProc)(void *ctx); ///< Write event callback type
-
     typedef void (*CloseProc)(void *ctx); ///< Connection close callback type
     typedef void (*ExitProc)(void *ctx);  ///< Event loop Exit callback type
 
@@ -592,7 +591,7 @@ namespace HSLL
          * @return 0 on success, error code on failure
          * @note One-time call function
          */
-        int EventLoop(FULL_LOAD_POLICY policy = FULL_LOAD_POLICY_ABANDON) SPSOCK_ONE_TIME_CALL
+        int EventLoop(FULL_LOAD_POLICY policy = FULL_LOAD_POLICY_DISCARD) SPSOCK_ONE_TIME_CALL
         {
             static_assert(SPSOCK_THREADPOOL_QUEUE_LENGTH > 0);
             static_assert(SPSOCK_THREADPOOL_DEFAULT_THREADS_NUM > 0);
@@ -984,7 +983,7 @@ namespace HSLL
          * @return 0 on success, error code on failure
          * @note One-time call function
          */
-        int EventLoop(FULL_LOAD_POLICY policy = FULL_LOAD_POLICY_ABANDON) SPSOCK_ONE_TIME_CALL
+        int EventLoop(FULL_LOAD_POLICY policy = FULL_LOAD_POLICY_DISCARD) SPSOCK_ONE_TIME_CALL
         {
             if ((status & 0x8) == 0x8)
             {
