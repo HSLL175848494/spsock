@@ -1,5 +1,11 @@
 # SPSock 网络库
 
+## [v1.1] - 2025-04-17
+
+### 新增
+- 读写任务线程池
+- server满载策略: 等待/丢弃任务
+- 
 ## 概述
 
 SPSock 提供了TCP/UDP 套接字封装，支持 IPv4/IPv6 双协议栈。主要特性包括：
@@ -76,10 +82,14 @@ if(error_code != 0) {
 1. **单例模式**：通过 `GetInstance()` 获取实例，使用后必须调用 `Release()`
 2. **线程安全**：`EventLoop()` 应在主线程运行，I/O 操作支持多线程
 3. **事件接收**：每次读写回调触发必须调用 `SOCKController`的`EnableEvent()`方法以接收下一次事件
-4. **性能调优**：适当调整宏定义：
+4. **事件处理**：请注意连接/关闭事件是在事件循环中进行，而读写事件是在线程池中执行
+5. **性能调优**：适当调整宏定义：
    ```cpp
    #define SPSOCK_MAX_EVENT_BSIZE 10000  // 最大处理事件数
    #define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS 500  // epoll 超时
+   #define SPSOCK_THREADPOOL_QUEUE_LENGTH 10000    ///< 任务队列长度
+   #define SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT 10  ///< 任务批提交大小
+   #define SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS 5  ///< 任务批处理数目
    ```
 
 ## 依赖项
