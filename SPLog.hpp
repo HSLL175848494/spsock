@@ -12,46 +12,6 @@
     LogInfo(true, level, __VA_ARGS__);
 
 /**
- * @brief Macro for logging information with specified level and function call
- * @param level Log level to use
- * @param func Function to call after logging
- * @param ... Variadic arguments to log
- */
-#define HSLL_LOGINFO_FUNC(level, func, ...) \
-    {                                       \
-        LogInfo(true, level, __VA_ARGS__);  \
-        func;                               \
-    }
-
-/**
- * @brief Macro for conditional logging
- * @param level Log level to use
- * @param exp Expression to evaluate
- * @param ... Variadic arguments to log
- */
-#define HSLL_LOGINFO_EXP(level, exp, ...)      \
-    {                                          \
-        if (exp)                               \
-            LogInfo(true, level, __VA_ARGS__); \
-    }
-
-/**
- * @brief Macro for conditional logging with additional function call
- * @param level Log level to use
- * @param exp Expression to evaluate
- * @param func Function to call if expression is true
- * @param ... Variadic arguments to log
- */
-#define HSLL_LOGINFO_EXP_FUNC(level, exp, func, ...) \
-    {                                                \
-        if (exp)                                     \
-        {                                            \
-            LogInfo(true, level, __VA_ARGS__);       \
-            func;                                    \
-        }                                            \
-    }
-
-/**
  * @brief Macro for conditional logging without prefix
  * @param level Log level to use
  * @param ... Variadic arguments to log
@@ -105,7 +65,7 @@ namespace HSLL
             if (sizeof...(TS))
             {
                 if (prefix)
-                    (std::cout << LevelStr[level] << ... << ts) << std::endl;
+                    (std::cout << LevelStr[level]<< ... << ts) << std::endl;
                 else
                     (std::cout << ... << ts) << std::endl;
             }
