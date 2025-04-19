@@ -13,7 +13,6 @@
 #include <netinet/tcp.h>
 #include <unordered_map>
 #include <unordered_set>
-
 #include "SPLog.hpp"
 #include "SPTask.hpp"
 
@@ -32,6 +31,9 @@ namespace HSLL
 #define SPSOCK_ONE_TIME_CALL                 ///< Marks functions that should only be called once
 #define SPSOCK_MAX_EVENT_BSIZE 5000          ///< Maximum events processed per epoll cycle
 #define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS -1 ///< Epoll wait timeout in milliseconds,default infinite
+
+    static_assert(SPSOCK_MAX_EVENT_BSIZE > 0);
+    static_assert(SPSOCK_EPOLL_TIMEOUT_MILLISECONDS > 0 || SPSOCK_EPOLL_TIMEOUT_MILLISECONDS == -1);
 
     /**
      * @brief Protocol types for socket creation
@@ -238,7 +240,7 @@ namespace HSLL
      * @brief Connection callback type
      * @return Context pointer for connection-specific data
      */
-    typedef void *(*ConnectProc)(SOCKController controller, const char *ip, unsigned short port);
+    typedef void *(*ConnectProc)(SOCKController &controller, const char *ip, unsigned short port);
 
     /**
      * @brief Structure holding callback functions
@@ -411,7 +413,8 @@ namespace HSLL
             std::string info = "[" + std::string(ip) + "]:" + std::to_string(port);
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Accepted new connection from: ", info);
 
-            void *ctx = proc.cnp(SOCKController(fd, this, FuncClose, FuncEnableEvent), ip, port);
+            SOCKController sockController(fd, this, FuncClose, FuncEnableEvent);
+            void *ctx = proc.cnp(sockController, ip, port);
             connections.insert({fd, {ctx, info}});
         }
 
@@ -599,13 +602,6 @@ namespace HSLL
          */
         int EventLoop(FULL_LOAD_POLICY policy = FULL_LOAD_POLICY_DISCARD) SPSOCK_ONE_TIME_CALL
         {
-            static_assert(SPSOCK_THREADPOOL_QUEUE_LENGTH > 0);
-            static_assert(SPSOCK_THREADPOOL_DEFAULT_THREADS_NUM > 0);
-            static_assert(SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT > 0);
-            static_assert(SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS > 0);
-            static_assert(SPSOCK_MAX_EVENT_BSIZE > 0);
-            static_assert(SPSOCK_EPOLL_TIMEOUT_MILLISECONDS > 0 || SPSOCK_EPOLL_TIMEOUT_MILLISECONDS == -1);
-
             if ((status & 0x8) == 0x8)
             {
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "EventLoop() cannot be called multiple times");
@@ -655,7 +651,6 @@ namespace HSLL
             }
 
             ThreadPool<SockTask> pool;
-
             if (pool.init(SPSOCK_THREADPOOL_QUEUE_LENGTH, cores, SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS) == false)
             {
                 close(epollfd);
@@ -664,12 +659,9 @@ namespace HSLL
                 return 17;
             }
 
-            UtilTask<bool(SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT - 1)>::type UtilTask;
-            UtilTask.pool = &pool;
-            UtilTask.policy = policy;
-            std::unordered_set<int> ignore;
-
             HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop started");
+            std::unordered_set<int> ignore;
+            UtilTask<bool(SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT - 1)>::type UtilTask(&pool, policy);
 
             while (exitFlag.load(std::memory_order_acquire))
             {

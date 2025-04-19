@@ -11,6 +11,11 @@ namespace HSLL
 #define SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT 10  ///< Number of tasks to submit in batch
 #define SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS 5  ///< Number of tasks to process in batch
 
+    static_assert(SPSOCK_THREADPOOL_QUEUE_LENGTH > 0);
+    static_assert(SPSOCK_THREADPOOL_DEFAULT_THREADS_NUM > 0);
+    static_assert(SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT > 0);
+    static_assert(SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS > 0);
+
     /**
      * @brief Policy options when thread pool is full
      */
@@ -33,14 +38,14 @@ namespace HSLL
     public:
         ~SockTask() = default;
         SockTask() = default;
-        
+
         /**
          * @brief Construct a new SockTask object
          * @param ctx Context pointer for the task
          * @param proc Callback function to execute
          */
         SockTask(void *ctx, RWProc proc) : ctx(ctx), proc(proc) {};
-        
+
         /**
          * @brief Execute the task's callback function
          */
@@ -52,8 +57,16 @@ namespace HSLL
      */
     struct UtilTask_Single
     {
-        FULL_LOAD_POLICY policy; ///< Policy when thread pool is full
+        FULL_LOAD_POLICY policy;    ///< Policy when thread pool is full
         ThreadPool<SockTask> *pool; ///< Pointer to thread pool
+
+        /**
+         * @brief Construct a new UtilTask_Single object
+         * @param pool Pointer to the thread pool to use for task execution
+         * @param policy The full load policy to apply when pool is at capacity
+         */
+        UtilTask_Single(ThreadPool<SockTask> *pool, FULL_LOAD_POLICY policy)
+            : pool(pool), policy(policy) {}
 
         /**
          * @brief Append a task to the thread pool
@@ -63,7 +76,7 @@ namespace HSLL
         void append(void *ctx, RWProc proc)
         {
             SockTask task(ctx, proc);
-            if (!pool->append(task))
+            if (!pool->append(task) && policy == FULL_LOAD_POLICY_WAIT)
                 pool->wait_append(task);
         }
 
@@ -78,13 +91,21 @@ namespace HSLL
      */
     struct UtilTask_Multipe
     {
-        unsigned int back = 0;  ///< Back index of task buffer
-        unsigned int front = 0; ///< Front index of task buffer
-        unsigned int size = 0; ///< Current number of buffered tasks
+        unsigned int back = 0;                               ///< Back index of task buffer
+        unsigned int front = 0;                              ///< Front index of task buffer
+        unsigned int size = 0;                               ///< Current number of buffered tasks
         SockTask tasks[SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT]; ///< Task buffer
 
-        FULL_LOAD_POLICY policy; ///< Policy when thread pool is full
+        FULL_LOAD_POLICY policy;    ///< Policy when thread pool is full
         ThreadPool<SockTask> *pool; ///< Pointer to thread pool
+
+        /**
+         * @brief Construct a new UtilTask_Multipe object
+         * @param pool Pointer to the thread pool to use for task execution
+         * @param policy The full load policy to apply when pool is at capacity
+         */
+        UtilTask_Multipe(ThreadPool<SockTask> *pool, FULL_LOAD_POLICY policy)
+            : pool(pool), policy(policy) {}
 
         /**
          * @brief Append a task to the buffer

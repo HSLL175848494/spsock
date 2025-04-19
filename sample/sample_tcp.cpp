@@ -33,7 +33,7 @@ class EchoServer
     }
 
 public:
-    EchoServer(SOCKController controller) : controller(controller) {}
+    EchoServer(SOCKController& controller) : controller(controller) {}
 
     void DealRead()
     {
@@ -75,7 +75,7 @@ void echo_csp(void *ctx)
     delete (EchoServer *)ctx;
 }
 
-void *echo_cnp(SOCKController controller, const char *ip, unsigned short port)
+void *echo_cnp(SOCKController& controller, const char *ip, unsigned short port)
 {
     return new EchoServer(controller);
 }
