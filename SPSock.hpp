@@ -1,17 +1,18 @@
 #ifndef HSLL_SPSOCK
 #define HSLL_SPSOCK
 
-#include <map>
-#include <set>
 #include <list>
 #include <fcntl.h>
 #include <cstring>
 #include <signal.h>
 #include <unistd.h>
+#include <assert.h>
 #include <arpa/inet.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <netinet/tcp.h>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "SPLog.hpp"
 #include "SPTask.hpp"
@@ -290,10 +291,11 @@ namespace HSLL
         SPSockProc proc;   ///< User connections callbacks
         SPSockAlive alive; ///< Keep-alive settings
 
-        CloseList list;                            ///< Connection close list
-        std::map<int, ConnectionInfo> connections; ///< Active connections
+        CloseList list;                                      ///< Connection close list
+        std::unordered_map<int, ConnectionInfo> connections; ///< Active connections
 
         int status;   ///< Internal status flags
+        int idlefd;   ///< Idle file descriptor
         int epollfd;  ///< Epoll file descriptor
         int listenfd; ///< Listening socket descriptor
 
@@ -350,6 +352,13 @@ namespace HSLL
             int fd = accept(listenfd, (sockaddr *)&addr, &addrlen);
             if (fd == -1)
             {
+                if (errno == EMFILE)
+                {
+                    close(idlefd);
+                    idlefd = accept(listenfd, NULL, NULL);
+                    close(idlefd);
+                    idlefd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+                }
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "accept() failed: ", strerror(errno));
                 return;
             }
@@ -486,6 +495,9 @@ namespace HSLL
          */
         void Clean()
         {
+            if (listenfd != -1)
+                close(listenfd);
+
             if ((status & 0x8) == 0x8)
             {
                 for (auto &it : connections)
@@ -500,22 +512,15 @@ namespace HSLL
                     HSLL_LOGINFO(LOG_LEVEL_INFO, "Closed connection: ", it.second.info);
                 }
 
+                close(idlefd);
                 close(epollfd);
-                epollfd = -1;
-                connections.clear();
-            }
-
-            if (listenfd != -1)
-            {
-                close(listenfd);
-                listenfd = -1;
             }
         }
 
         /**
          * @brief Private constructor
          */
-        SPSockTcp() : epollfd(-1), listenfd(-1), status(0), lin{0, 0}, alive{1, 120, 3, 10} {};
+        SPSockTcp() : epollfd(-1), listenfd(-1), idlefd(-1), status(0), lin{0, 0}, alive{1, 120, 3, 10} {};
 
     public:
         /**
@@ -622,6 +627,8 @@ namespace HSLL
             if ((status & 0x4) != 0x4)
                 HSLL_LOGINFO(LOG_LEVEL_WARNING, "Exit signal handler not configured");
 
+            assert((idlefd = ::open("/dev/null", O_RDONLY | O_CLOEXEC)) >= 0);
+
             epoll_event event;
             epoll_event events[SPSOCK_MAX_EVENT_BSIZE];
             if ((epollfd = epoll_create1(0)) == -1)
@@ -660,7 +667,7 @@ namespace HSLL
             UtilTask<bool(SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT - 1)>::type UtilTask;
             UtilTask.pool = &pool;
             UtilTask.policy = policy;
-            std::set<int> ignore;
+            std::unordered_set<int> ignore;
 
             HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop started");
 
@@ -894,10 +901,7 @@ namespace HSLL
         void Clean()
         {
             if (sockfd != -1)
-            {
                 close(sockfd);
-                sockfd = -1;
-            }
         }
 
         /**
