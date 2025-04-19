@@ -9,6 +9,15 @@
 
 namespace HSLL
 {
+
+#if defined(__GNUC__) || defined(__clang__)
+#define LIKELY(x) __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define LIKELY(x) (x)
+#define UNLIKELY(x) (x)
+#endif
+
 	/**
 	 * @brief Thread-safe fixed-size block queue with blocking operations
 	 * @tparam TYPE Type of elements stored in the queue
@@ -60,12 +69,12 @@ namespace HSLL
 		 */
 		Node *allocateNodeUnsafe()
 		{
-			if (!freeListHead)
+			if (UNLIKELY(!freeListHead))
 				return nullptr;
 
 			Node *node = freeListHead;
 			freeListHead = node->next;
-			if (freeListHead)
+			if (LIKELY(freeListHead))
 				freeListHead->prev = nullptr;
 
 			return node;
@@ -78,21 +87,21 @@ namespace HSLL
 		 */
 		Node *allocateNodesUnsafe(unsigned int count)
 		{
-			if (!freeListHead || count == 0)
+			if (UNLIKELY(!freeListHead || count == 0))
 				return nullptr;
 
 			Node *head = freeListHead;
 			Node *tail = head;
 			unsigned int allocated = 1;
 
-			while (allocated < count && tail->next)
+			while (LIKELY(allocated < count && tail->next))
 			{
 				tail = tail->next;
 				allocated++;
 			}
 
 			freeListHead = tail->next;
-			if (freeListHead)
+			if (LIKELY(freeListHead))
 				freeListHead->prev = nullptr;
 
 			tail->next = nullptr;
@@ -106,11 +115,11 @@ namespace HSLL
 		 */
 		void recycleNodesUnsafe(Node *head, Node *tail)
 		{
-			if (!head || !tail)
+			if (UNLIKELY(!head || !tail))
 				return;
 
 			tail->next = freeListHead;
-			if (freeListHead)
+			if (LIKELY(freeListHead))
 				freeListHead->prev = tail;
 
 			freeListHead = head;
@@ -145,11 +154,11 @@ namespace HSLL
 		 */
 		bool init(unsigned int capacity)
 		{
-			if (isInitialized || capacity == 0)
+			if (UNLIKELY(isInitialized || capacity == 0))
 				return false;
 
 			memoryBlock = ::operator new(sizeof(Node) * capacity, std::nothrow);
-			if (!memoryBlock)
+			if (UNLIKELY(!memoryBlock))
 				return false;
 
 			Node *nodes = (Node *)(memoryBlock);
@@ -179,7 +188,7 @@ namespace HSLL
 			Node *node = allocateNodeUnsafe();
 			freeLock.unlock();
 
-			if (!node)
+			if (UNLIKELY(!node))
 				return false;
 
 			new (&node->data) TYPE(std::forward<T>(element));
@@ -189,7 +198,7 @@ namespace HSLL
 				node->prev = dataListTail;
 				node->next = nullptr;
 
-				if (dataListTail)
+				if (LIKELY(dataListTail))
 					dataListTail->next = node;
 				else
 					dataListHead = node;
@@ -213,8 +222,8 @@ namespace HSLL
 			{
 				std::unique_lock<std::mutex> lock(freeListMutex);
 				notFullCond.wait(lock, [this]
-								 { return isStopped.load(std::memory_order_acquire) || freeListHead; });
-				if (isStopped.load(std::memory_order_acquire))
+								 { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(freeListHead != nullptr); });
+				if (UNLIKELY(isStopped.load(std::memory_order_acquire)))
 					return false;
 				node = allocateNodeUnsafe();
 			}
@@ -226,7 +235,7 @@ namespace HSLL
 				node->prev = dataListTail;
 				node->next = nullptr;
 
-				if (dataListTail)
+				if (LIKELY(dataListTail))
 					dataListTail->next = node;
 				else
 					dataListHead = node;
@@ -253,9 +262,9 @@ namespace HSLL
 			{
 				std::unique_lock<std::mutex> lock(freeListMutex);
 				if (!notFullCond.wait_for(lock, timeout, [this]
-										  { return isStopped.load(std::memory_order_acquire) || freeListHead; }))
+										  { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(freeListHead != nullptr); }))
 					return false;
-				if (isStopped.load(std::memory_order_acquire))
+				if (UNLIKELY(isStopped.load(std::memory_order_acquire)))
 					return false;
 				node = allocateNodeUnsafe();
 			}
@@ -267,7 +276,7 @@ namespace HSLL
 				node->prev = dataListTail;
 				node->next = nullptr;
 
-				if (dataListTail)
+				if (LIKELY(dataListTail))
 					dataListTail->next = node;
 				else
 					dataListHead = node;
@@ -288,12 +297,12 @@ namespace HSLL
 			Node *node = nullptr;
 			{
 				std::unique_lock<std::mutex> lock(dataMutex);
-				if (!dataListHead)
+				if (UNLIKELY(!dataListHead))
 					return false;
 
 				node = dataListHead;
 				dataListHead = node->next;
-				if (dataListHead)
+				if (LIKELY(dataListHead))
 					dataListHead->prev = nullptr;
 				else
 					dataListTail = nullptr;
@@ -322,13 +331,13 @@ namespace HSLL
 			{
 				std::unique_lock<std::mutex> lock(dataMutex);
 				notEmptyCond.wait(lock, [this]
-								  { return isStopped.load(std::memory_order_acquire) || dataListHead; });
-				if (!dataListHead)
+								  { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(dataListHead != nullptr); });
+				if (UNLIKELY(!dataListHead))
 					return false;
 
 				node = dataListHead;
 				dataListHead = node->next;
-				if (dataListHead)
+				if (LIKELY(dataListHead))
 					dataListHead->prev = nullptr;
 				else
 					dataListTail = nullptr;
@@ -361,14 +370,14 @@ namespace HSLL
 			{
 				std::unique_lock<std::mutex> lock(dataMutex);
 				if (!notEmptyCond.wait_for(lock, timeout, [this]
-										   { return isStopped.load(std::memory_order_acquire) || dataListHead; }))
+										   { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(dataListHead != nullptr); }))
 					return false;
-				if (!dataListHead)
+				if (UNLIKELY(!dataListHead))
 					return false;
 
 				node = dataListHead;
 				dataListHead = node->next;
-				if (dataListHead)
+				if (LIKELY(dataListHead))
 					dataListHead->prev = nullptr;
 				else
 					dataListTail = nullptr;
@@ -394,21 +403,21 @@ namespace HSLL
 		 */
 		unsigned int pushBulk(const TYPE *elements, unsigned int count)
 		{
-			if (count == 0)
+			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> freeLock(freeListMutex);
 			Node *head = allocateNodesUnsafe(count);
 			freeLock.unlock();
 
-			if (!head)
+			if (UNLIKELY(!head))
 				return 0;
 
 			Node *current = head;
 			Node *tail = nullptr;
 			unsigned actualCount = 0;
 
-			for (; actualCount < count && current; ++actualCount)
+			for (; LIKELY(actualCount < count && current); ++actualCount)
 			{
 				new (&current->data) TYPE(elements[actualCount]);
 				tail = current;
@@ -417,7 +426,7 @@ namespace HSLL
 
 			{
 				std::lock_guard<std::mutex> dataLock(dataMutex);
-				if (dataListTail)
+				if (LIKELY(dataListTail))
 				{
 					dataListTail->next = head;
 					head->prev = dataListTail;
@@ -442,12 +451,12 @@ namespace HSLL
 		 */
 		unsigned int wait_pushBulk(const TYPE *elements, unsigned int count)
 		{
-			if (count == 0 || isStopped.load(std::memory_order_acquire))
+			if (UNLIKELY(count == 0) || UNLIKELY(isStopped.load(std::memory_order_acquire)))
 				return 0;
 
 			unsigned int pushed = 0;
 
-			while (pushed < count && !isStopped.load(std::memory_order_acquire))
+			while (LIKELY(pushed < count) && LIKELY(!isStopped.load(std::memory_order_acquire)))
 			{
 				Node *head = nullptr;
 				unsigned allocated = 0;
@@ -455,18 +464,18 @@ namespace HSLL
 				{
 					std::unique_lock<std::mutex> lock(freeListMutex);
 					notFullCond.wait(lock, [this]
-									 { return isStopped.load(std::memory_order_acquire) || freeListHead; });
-					if (isStopped.load(std::memory_order_acquire))
+									 { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(freeListHead != nullptr); });
+					if (UNLIKELY(isStopped.load(std::memory_order_acquire)))
 						break;
 
 					unsigned remaining = count - pushed;
 					head = allocateNodesUnsafe(remaining);
-					if (!head)
+					if (UNLIKELY(!head))
 						continue;
 
 					allocated = 1;
 					Node *tail = head;
-					while (tail->next && allocated < remaining)
+					while (LIKELY(tail->next && allocated < remaining))
 					{
 						tail = tail->next;
 						allocated++;
@@ -474,7 +483,7 @@ namespace HSLL
 				}
 
 				Node *current = head;
-				for (unsigned i = 0; i < allocated; ++i)
+				for (unsigned i = 0; LIKELY(i < allocated); ++i)
 				{
 					new (&current->data) TYPE(elements[pushed + i]);
 					current = current->next;
@@ -483,10 +492,10 @@ namespace HSLL
 				{
 					std::lock_guard<std::mutex> dataLock(dataMutex);
 					Node *tailNode = head;
-					for (unsigned j = 1; j < allocated && tailNode->next; ++j)
+					for (unsigned j = 1; LIKELY(j < allocated && tailNode->next); ++j)
 						tailNode = tailNode->next;
 
-					if (dataListTail)
+					if (LIKELY(dataListTail))
 					{
 						dataListTail->next = head;
 						head->prev = dataListTail;
@@ -518,32 +527,32 @@ namespace HSLL
 		template <class Rep, class Period>
 		unsigned int wait_pushBulk(const TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
-			if (count == 0)
+			if (UNLIKELY(count == 0))
 				return 0;
 
 			auto deadline = std::chrono::steady_clock::now() + timeout;
 			unsigned int pushed = 0;
 
-			while (pushed < count && !isStopped.load(std::memory_order_acquire))
+			while (LIKELY(pushed < count) && LIKELY(!isStopped.load(std::memory_order_acquire)))
 			{
 				Node *head = nullptr;
-				unsigned allocated = 0;
+					unsigned allocated = 0;
 				{
 					std::unique_lock<std::mutex> lock(freeListMutex);
 					if (!notFullCond.wait_until(lock, deadline, [this]
-												{ return isStopped.load(std::memory_order_acquire) || freeListHead; }))
+												{ return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(freeListHead != nullptr); }))
 						break;
-					if (isStopped.load(std::memory_order_acquire))
+					if (UNLIKELY(isStopped.load(std::memory_order_acquire)))
 						break;
 
 					unsigned remaining = count - pushed;
 					head = allocateNodesUnsafe(remaining);
-					if (!head)
+					if (UNLIKELY(!head))
 						continue;
 
 					allocated = 1;
 					Node *tail = head;
-					while (tail->next && allocated < remaining)
+					while (LIKELY(tail->next && allocated < remaining))
 					{
 						tail = tail->next;
 						allocated++;
@@ -551,7 +560,7 @@ namespace HSLL
 				}
 
 				Node *current = head;
-				for (unsigned i = 0; i < allocated; ++i)
+				for (unsigned i = 0; LIKELY(i < allocated); ++i)
 				{
 					new (&current->data) TYPE(elements[pushed + i]);
 					current = current->next;
@@ -560,10 +569,10 @@ namespace HSLL
 				{
 					std::lock_guard<std::mutex> dataLock(dataMutex);
 					Node *tailNode = head;
-					for (unsigned j = 1; j < allocated && tailNode->next; ++j)
+					for (unsigned j = 1; LIKELY(j < allocated && tailNode->next); ++j)
 						tailNode = tailNode->next;
 
-					if (dataListTail)
+					if (LIKELY(dataListTail))
 					{
 						dataListTail->next = head;
 						head->prev = dataListTail;
@@ -590,7 +599,7 @@ namespace HSLL
 		 */
 		unsigned int popBulk(TYPE *elements, unsigned int count)
 		{
-			if (count == 0)
+			if (UNLIKELY(count == 0))
 				return 0;
 
 			Node *head = nullptr;
@@ -599,28 +608,28 @@ namespace HSLL
 
 			{
 				std::unique_lock<std::mutex> lock(dataMutex);
-				if (!dataListHead)
+				if (UNLIKELY(!dataListHead))
 					return 0;
 
 				head = dataListHead;
 				tail = head;
 				actualCount = 1;
 
-				while (tail->next && actualCount < count)
+				while (LIKELY(tail->next && actualCount < count))
 				{
 					tail = tail->next;
 					actualCount++;
 				}
 
 				dataListHead = tail->next;
-				if (dataListHead)
+				if (LIKELY(dataListHead))
 					dataListHead->prev = nullptr;
 				else
 					dataListTail = nullptr;
 			}
 
 			Node *current = head;
-			for (unsigned i = 0; i < actualCount; ++i)
+			for (unsigned i = 0; LIKELY(i < actualCount); ++i)
 			{
 				elements[i] = std::move(current->data);
 				current->data.~TYPE();
@@ -646,7 +655,7 @@ namespace HSLL
 		 */
 		unsigned int wait_popBulk(TYPE *elements, unsigned int count)
 		{
-			if (count == 0 || isStopped.load(std::memory_order_acquire))
+			if (UNLIKELY(count == 0) || UNLIKELY(isStopped.load(std::memory_order_acquire)))
 				return 0;
 
 			Node *head = nullptr;
@@ -656,30 +665,30 @@ namespace HSLL
 			{
 				std::unique_lock<std::mutex> lock(dataMutex);
 				notEmptyCond.wait(lock, [this]
-								  { return isStopped.load(std::memory_order_acquire) || dataListHead; });
+								  { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(dataListHead != nullptr); });
 
-				if (!dataListHead)
+				if (UNLIKELY(!dataListHead))
 					return 0;
 
 				head = dataListHead;
 				tail = head;
 				allocated = 1;
 
-				while (tail->next && allocated < count)
+				while (LIKELY(tail->next && allocated < count))
 				{
 					tail = tail->next;
 					allocated++;
 				}
 
 				dataListHead = tail->next;
-				if (dataListHead)
+				if (LIKELY(dataListHead))
 					dataListHead->prev = nullptr;
 				else
 					dataListTail = nullptr;
 			}
 
 			Node *current = head;
-			for (unsigned i = 0; i < allocated; ++i)
+			for (unsigned i = 0; LIKELY(i < allocated); ++i)
 			{
 				elements[i] = std::move(current->data);
 				current->data.~TYPE();
@@ -709,7 +718,7 @@ namespace HSLL
 		template <class Rep, class Period>
 		unsigned int wait_popBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
-			if (count == 0)
+			if (UNLIKELY(count == 0))
 				return 0;
 
 			Node *head = nullptr;
@@ -719,33 +728,33 @@ namespace HSLL
 			{
 				std::unique_lock<std::mutex> lock(dataMutex);
 				if (!notEmptyCond.wait_for(lock, timeout, [this]
-										   { return isStopped.load(std::memory_order_acquire) || dataListHead; }))
+										   { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(dataListHead != nullptr); }))
 				{
 					return 0;
 				}
 
-				if (!dataListHead)
+				if (UNLIKELY(!dataListHead))
 					return 0;
 
 				head = dataListHead;
 				tail = head;
 				allocated = 1;
 
-				while (tail->next && allocated < count)
+				while (LIKELY(tail->next && allocated < count))
 				{
 					tail = tail->next;
 					allocated++;
 				}
 
 				dataListHead = tail->next;
-				if (dataListHead)
+				if (LIKELY(dataListHead))
 					dataListHead->prev = nullptr;
 				else
 					dataListTail = nullptr;
 			}
 
 			Node *current = head;
-			for (unsigned i = 0; i < allocated; ++i)
+			for (unsigned i = 0; LIKELY(i < allocated); ++i)
 			{
 				elements[i] = std::move(current->data);
 				current->data.~TYPE();
@@ -787,7 +796,7 @@ namespace HSLL
 				current = current->next;
 			}
 
-			if (memoryBlock)
+			if (LIKELY(memoryBlock))
 			{
 				::operator delete(memoryBlock);
 				memoryBlock = nullptr;
