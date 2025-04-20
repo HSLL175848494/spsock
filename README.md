@@ -3,8 +3,10 @@
 ## [v1.1] - 2025-04-17
 
 ### 新增
+
 - 读写任务线程池
 - server满载策略: 等待/丢弃任务
+
 ## 概述
 
 SPSock 提供了TCP/UDP 套接字封装，支持 IPv4/IPv6 双协议栈。主要特性包括：
@@ -85,7 +87,7 @@ if(error_code != 0) {
 5. **性能调优**：适当调整宏定义：
    ```cpp
    #define SPSOCK_MAX_EVENT_BSIZE 10000  // 最大处理事件数
-   #define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS 500  // epoll 超时
+   #define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS -1  // epoll 超时
    #define SPSOCK_THREADPOOL_QUEUE_LENGTH 10000    ///< 任务队列长度
    #define SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT 10  ///< 任务批提交大小
    #define SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS 5  ///< 任务批处理数目

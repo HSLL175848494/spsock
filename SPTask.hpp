@@ -1,32 +1,11 @@
 #ifndef HSLL_SPTASK
 #define HSLL_SPTASK
 
+#include "SPTypes.h"
 #include "ThreadPool.hpp"
 
 namespace HSLL
 {
-
-#define SPSOCK_THREADPOOL_QUEUE_LENGTH 10000    ///< The maximum number of task queue
-#define SPSOCK_THREADPOOL_DEFAULT_THREADS_NUM 4 ///< If the number of system cores fails to be obtained, set the default number of threads
-#define SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT 10  ///< Number of tasks to submit in batch
-#define SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS 5  ///< Number of tasks to process in batch
-
-    static_assert(SPSOCK_THREADPOOL_QUEUE_LENGTH > 0);
-    static_assert(SPSOCK_THREADPOOL_DEFAULT_THREADS_NUM > 0);
-    static_assert(SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT > 0);
-    static_assert(SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS > 0);
-
-    /**
-     * @brief Policy options when thread pool is full
-     */
-    enum FULL_LOAD_POLICY
-    {
-        FULL_LOAD_POLICY_WAIT,   ///< Wait until task can be added to queue
-        FULL_LOAD_POLICY_DISCARD ///< Discard task when queue is full
-    };
-
-    typedef void (*RWProc)(void *ctx); ///< Read/Write event callback type
-
     /**
      * @brief Read or write task for thread pool
      */

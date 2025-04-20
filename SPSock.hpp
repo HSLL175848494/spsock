@@ -2,57 +2,25 @@
 #define HSLL_SPSOCK
 
 #include <list>
+#include <mutex>
+#include <string.h>
 #include <fcntl.h>
-#include <cstring>
 #include <signal.h>
 #include <unistd.h>
 #include <assert.h>
 #include <arpa/inet.h>
-#include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/epoll.h>
 #include <netinet/tcp.h>
 #include <unordered_map>
 #include <unordered_set>
+
 #include "SPLog.hpp"
 #include "SPTask.hpp"
+#include "SPController.hpp"
 
 namespace HSLL
 {
-
-/**
- * @brief Macro to delete class copy/move constructors and assignment operators
- */
-#define SPSOCK_CONSTRUCTOR_DELETE(cName)      \
-    cName(const cName &) = delete;            \
-    cName(cName &&) = delete;                 \
-    cName &operator=(const cName &) = delete; \
-    cName &operator=(cName &&) = delete;
-
-#define SPSOCK_ONE_TIME_CALL                 ///< Marks functions that should only be called once
-#define SPSOCK_MAX_EVENT_BSIZE 5000          ///< Maximum events processed per epoll cycle
-#define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS -1 ///< Epoll wait timeout in milliseconds,default infinite
-
-    static_assert(SPSOCK_MAX_EVENT_BSIZE > 0);
-    static_assert(SPSOCK_EPOLL_TIMEOUT_MILLISECONDS > 0 || SPSOCK_EPOLL_TIMEOUT_MILLISECONDS == -1);
-
-    /**
-     * @brief Protocol types for socket creation
-     */
-    enum PROTOCOL
-    {
-        PROTOCOL_UDP = SOCK_DGRAM, ///< UDP protocol
-        PROTOCOL_TCP = SOCK_STREAM ///< TCP protocol
-    };
-
-    /**
-     * @brief Address family types for socket operations
-     */
-    enum ADDRESS_FAMILY
-    {
-        ADDRESS_FAMILY_INET = AF_INET,  ///< IPv4 address family
-        ADDRESS_FAMILY_INET6 = AF_INET6 ///< IPv6 address family
-    };
-
     /**
      * @brief Template structure for socket address initialization
      * @tparam address_family IP version specification (IPv4/IPv6)
@@ -104,182 +72,6 @@ namespace HSLL
             address.sin6_addr = in6addr_any;
             address.sin6_port = htons(port);
         }
-    };
-
-    /**
-     * @brief Array of error descriptions for SPSock operations
-     * @note Reordered for logic: generic errors first, then socket-specific, then epoll/signal, finally state errors
-     */
-    constexpr const char *const SPSockErrors[] = {
-        "No error occurred",                        // 0
-        "Invalid parameter",                        // 1: Generic error for invalid inputs
-        "socket() error",                           // 2: Socket creation errors
-        "setsockopt() error",                       // 3
-        "bind() error",                             // 4
-        "listen() error",                           // 5
-        "accept() error",                           // 6: Added for accept() failures
-        "recvfrom() error",                         // 7: UDP-specific
-        "sendto() error",                           // 8: UDP-specific
-        "epoll_create1() error",                    // 9: Epoll-related errors
-        "epoll_ctl() error",                        // 10
-        "epoll_wait() error",                       // 11
-        "signal() error",                           // 12: Signal handling error
-        "Listen() not called",                      // 13: State-related errors
-        "SetCallback() not called",                 // 14
-        "Function cannot be called multiple times", // 15
-        "Bind() not called"                         // 16
-        "ThreadPool init error"                     // 17
-    };
-
-    /**
-     * @brief Controller class for socket operations
-     * @note Provides thread-safe I/O operations and connection management
-     */
-    class SOCKController
-    {
-        typedef void (*FuncClose)(void *, int);             ///< Close callback function type
-        typedef bool (*FuncEvent)(void *, int, bool, bool); ///< Event control function type
-
-        int fd;       ///< Socket file descriptor
-        void *ctx;    ///< Context pointer for callback functions
-        FuncClose fc; ///< Close callback function
-        FuncEvent fe; ///< Event control function
-
-        template <ADDRESS_FAMILY>
-        friend class SPSockTcp;
-
-        /**
-         * @brief Private constructor used by SPSockTcp
-         * @param fd Socket file descriptor
-         * @param ctx Context pointer for callbacks
-         * @param fc Close callback function
-         * @param fe Event control callback function
-         */
-        SOCKController(int fd, void *ctx, FuncClose fc, FuncEvent fe)
-            : fd(fd), ctx(ctx), fc(fc), fe(fe) {}
-
-    public:
-        /**
-         * @brief Default constructor
-         */
-        SOCKController() {}
-
-        /**
-         * @brief Reads data from the socket
-         * @param buf Buffer to store received data
-         * @param size Maximum bytes to read
-         * @return Number of bytes read, 0 for EAGAIN/EWOULDBLOCK, -1 for errors
-         * @note Call Close() or EnableEvent() on error return
-         */
-        ssize_t Read(void *buf, size_t size)
-        {
-        retry:
-            ssize_t ret = recv(fd, buf, size, 0);
-            if (ret == -1)
-            {
-                if (errno == EINTR)
-                    goto retry;
-                else if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    return 0;
-                else
-                    return -1;
-            }
-            return ret;
-        }
-
-        /**
-         * @brief Writes data to the socket
-         * @param buf Data buffer to send
-         * @param size Number of bytes to send
-         * @return Number of bytes sent, 0 for EAGAIN/EWOULDBLOCK, -1 for errors
-         * @note Call Close() or EnableEvent() on error return
-         */
-        ssize_t Write(const void *buf, size_t size)
-        {
-        retry:
-            ssize_t ret = send(fd, buf, size, MSG_NOSIGNAL);
-            if (ret == -1)
-            {
-                if (errno == EINTR)
-                    goto retry;
-                else if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    return 0;
-                else
-                    return -1;
-            }
-            return ret;
-        }
-
-        /**
-         * @brief Re-enables event monitoring for the socket
-         * @param read Enable read events
-         * @param write Enable write events
-         * @return true on success, false on failure (requires Close())
-         */
-        bool EnableEvent(bool read, bool write)
-        {
-            return fe(ctx, fd, read, write);
-        }
-
-        /**
-         * @brief Closes the connection actively
-         * @note Should be called after detecting errors
-         */
-        void Close()
-        {
-            fc(ctx, fd);
-        }
-    };
-
-    typedef void (*ReadProc)(void *ctx);  ///< Read event callback type
-    typedef void (*WriteProc)(void *ctx); ///< Write event callback type
-    typedef void (*CloseProc)(void *ctx); ///< Connection close callback type
-    typedef void (*ExitProc)(void *ctx);  ///< Event loop Exit callback type
-
-    /**
-     * @brief Connection callback type
-     * @return Context pointer for connection-specific data
-     */
-    typedef void *(*ConnectProc)(SOCKController &controller, const char *ip, unsigned short port);
-
-    /**
-     * @brief Structure holding callback functions
-     */
-    struct SPSockProc
-    {
-        ReadProc rdp;    ///< Read event handler
-        WriteProc wtp;   ///< Write event handler
-        ConnectProc cnp; ///< New connection handler
-        CloseProc csp;   ///< Close event handler
-    };
-
-    /**
-     * @brief Keep-alive configuration structure
-     */
-    struct SPSockAlive
-    {
-        int keepAlive;      ///< Enable keep-alive (0 = disable, 1 = enable)
-        int aliveSeconds;   ///< Idle time before probes
-        int detectTimes;    ///< Number of probes
-        int detectInterval; ///< Interval between probes
-    };
-
-    /**
-     * @brief Connection information container
-     */
-    struct ConnectionInfo
-    {
-        void *ctx;        ///< User-defined context
-        std::string info; ///< Connection identifier string
-    };
-
-    /**
-     * @brief Thread-safe connection close list
-     */
-    struct CloseList
-    {
-        std::mutex mtx;             ///< Mutex for thread safety
-        std::list<int> connections; ///< List of connections to close
     };
 
     /**
