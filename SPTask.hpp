@@ -11,10 +11,12 @@ namespace HSLL
      */
     struct SockTask
     {
-        void *ctx;   ///< Context for task
-        RWProc proc; ///< Read/Write event callback
+        ReadWriteProc proc;  ///< Read/Write event callback
+        SOCKController *ctx; ///< Context for task
 
     public:
+        static TaskProc taskProc;
+
         ~SockTask() = default;
         SockTask() = default;
 
@@ -23,13 +25,18 @@ namespace HSLL
          * @param ctx Context pointer for the task
          * @param proc Callback function to execute
          */
-        SockTask(void *ctx, RWProc proc) : ctx(ctx), proc(proc) {};
+        SockTask(SOCKController *ctx, ReadWriteProc proc) : ctx(ctx), proc(proc) {};
 
         /**
          * @brief Execute the task's callback function
          */
-        void execute() { proc(ctx); }
+        void execute()
+        {
+            taskProc(ctx, proc);
+        }
     };
+
+    TaskProc SockTask::taskProc;
 
     /**
      * @brief Utility for handling single task operations
@@ -52,7 +59,7 @@ namespace HSLL
          * @param ctx Context for the task
          * @param proc Callback function
          */
-        void append(void *ctx, RWProc proc)
+        void append(SOCKController *ctx, ReadProc proc)
         {
             SockTask task(ctx, proc);
             if (!pool->append(task) && policy == FULL_LOAD_POLICY_WAIT)
@@ -62,7 +69,7 @@ namespace HSLL
         /**
          * @brief Submit tasks (no-op for single task)
          */
-        void submit() {}
+        void commit() {}
     };
 
     /**
@@ -91,20 +98,20 @@ namespace HSLL
          * @param ctx Context for the task
          * @param proc Callback function
          */
-        void append(void *ctx, RWProc proc)
+        void append(SOCKController *ctx, ReadProc proc)
         {
             tasks[front] = {ctx, proc};
             front = (front + 1) % SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT;
             size++;
 
             if (size == SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT)
-                submit();
+                commit();
         }
 
         /**
          * @brief Submit buffered tasks to thread pool
          */
-        void submit()
+        void commit()
         {
             if (size == 0)
                 return;
@@ -145,7 +152,7 @@ namespace HSLL
             back = (back + num) % SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT;
 
             if (size)
-                submit();
+                commit();
         }
     };
 

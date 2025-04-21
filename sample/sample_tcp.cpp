@@ -5,15 +5,14 @@ using namespace HSLL;
 class EchoServer
 {
     std::string waitSent;
-    SOCKController controller;
 
-    void Send()
+    void Send(SOCKController *controller)
     {
         unsigned int ptr = 0;
         while (ptr < waitSent.size())
         {
             std::string_view sv(waitSent.data() + ptr, waitSent.size() - ptr);
-            ssize_t bytes = controller.Write(sv.data(), sv.size());
+            ssize_t bytes = controller->writeTemp(sv.data(), sv.size());
 
             if (bytes == 0)
             {
@@ -21,7 +20,7 @@ class EchoServer
             }
             else if (bytes == -1)
             {
-                controller.EnableEvent(false, false);
+                controller->enableEvents(false, false);
                 return;
             }
 
@@ -29,55 +28,57 @@ class EchoServer
         }
 
         waitSent = waitSent.substr(ptr);
-        controller.EnableEvent(true, true);
+
+        if (controller->commitWrite())
+            controller->enableEvents(true, true);
+        else
+            controller->enableEvents(true, false);
     }
 
 public:
-    EchoServer(SOCKController& controller) : controller(controller) {}
-
-    void DealRead()
+    void DealRead(SOCKController *controller)
     {
         char buf[1024];
         ssize_t bytes;
 
-        while ((bytes = controller.Read(buf, 1024)) > 0)
+        while ((bytes = controller->read(buf, 1024)) > 0)
             waitSent.append(buf, bytes);
 
         if (bytes == -1)
         {
-            controller.EnableEvent(false, false);
+            controller->enableEvents(false, false);
             return;
         }
 
-        Send();
+        Send(controller);
     }
 
-    void DealWrite()
+    void DealWrite(SOCKController *controller)
     {
-        Send();
+        Send(controller);
     }
 };
 
-void echo_rdp(void *ctx)
+void echo_rdp(SOCKController *controller)
 {
-    EchoServer *ec = (EchoServer *)ctx;
-    ec->DealRead();
+    EchoServer *ec = (EchoServer *)controller->getCtx();
+    ec->DealRead(controller);
 }
 
-void echo_wtp(void *ctx)
+void echo_wtp(SOCKController *controller)
 {
-    EchoServer *ec = (EchoServer *)ctx;
-    ec->DealWrite();
+    EchoServer *ec = (EchoServer *)controller->getCtx();
+    ec->DealWrite(controller);
 }
 
-void echo_csp(void *ctx)
+void echo_csp(SOCKController *controller)
 {
-    delete (EchoServer *)ctx;
+    delete (EchoServer *)controller->getCtx();
 }
 
-void *echo_cnp(SOCKController& controller, const char *ip, unsigned short port)
+void *echo_cnp(const char *ip, unsigned short port)
 {
-    return new EchoServer(controller);
+    return new EchoServer();
 }
 
 int main()

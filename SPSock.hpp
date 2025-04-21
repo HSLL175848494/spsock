@@ -18,6 +18,7 @@
 #include "SPLog.hpp"
 #include "SPTask.hpp"
 #include "SPController.hpp"
+#include "noncopyable.hpp"
 
 namespace HSLL
 {
@@ -79,14 +80,14 @@ namespace HSLL
      * @tparam address_family IP version (IPv4/IPv6)
      */
     template <ADDRESS_FAMILY address_family = ADDRESS_FAMILY::ADDRESS_FAMILY_INET>
-    class SPSockTcp
+    class SPSockTcp : noncopyable
     {
         linger lin;        ///< Linger configuration
         SPSockProc proc;   ///< User connections callbacks
         SPSockAlive alive; ///< Keep-alive settings
 
         CloseList list;                                      ///< Connection close list
-        std::unordered_map<int, ConnectionInfo> connections; ///< Active connections
+        std::unordered_map<int, SOCKController> connections; ///< Active connections
 
         int status;   ///< Internal status flags
         int idlefd;   ///< Idle file descriptor
@@ -188,26 +189,29 @@ namespace HSLL
                 return;
             }
 
-            char ip[INET6_ADDRSTRLEN];
-            unsigned short port;
+            auto [it, success] = connections.emplace(fd, SOCKController{});
+            if (!success)
+            {
+                HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to add connection to map");
+                close(fd);
+                return;
+            }
 
+            auto &sockController = it->second;
             if constexpr (address_family == ADDRESS_FAMILY_INET)
             {
-                inet_ntop(AF_INET, &addr.sin_addr, ip, INET6_ADDRSTRLEN);
-                port = ntohs(addr.sin_port);
+                inet_ntop(AF_INET, &addr.sin_addr, sockController.ip, INET6_ADDRSTRLEN);
+                sockController.port = ntohs(addr.sin_port);
             }
             else
             {
-                inet_ntop(AF_INET6, &addr.sin6_addr, ip, INET6_ADDRSTRLEN);
-                port = ntohs(addr.sin6_port);
+                inet_ntop(AF_INET6, &addr.sin6_addr, sockController.ip, INET6_ADDRSTRLEN);
+                sockController.port = ntohs(addr.sin6_port);
             }
 
-            std::string info = "[" + std::string(ip) + "]:" + std::to_string(port);
-            HSLL_LOGINFO(LOG_LEVEL_INFO, "Accepted new connection from: ", info);
-
-            SOCKController sockController(fd, this, FuncClose, FuncEnableEvent);
-            void *ctx = proc.cnp(sockController, ip, port);
-            connections.insert({fd, {ctx, info}});
+            void *ctx = proc.cnp(sockController.ip, sockController.port);
+            sockController.init(fd, ctx, FuncClose, FuncEnableEvent, SPSOCK_READ_BSIZE, SPSOCK_WRITE_BSIZE);
+            HSLL_LOGINFO(LOG_LEVEL_INFO, "Accepted new connection from: ", sockController.ipPort);
         }
 
         /**
@@ -226,28 +230,43 @@ namespace HSLL
         }
 
         /**
+         * @brief Task function for handling socket read operations and processing
+         * @param ctx Pointer to the socket controller containing connection state and buffers
+         * @param proc Callback function to process the received data
+         * @details This function:
+         * 1. Attempts to read data from the socket using the controller's readSocket() method
+         * 2. If read fails (returns false), disables further read/write events on the socket
+         * 3. If read succeeds, invokes the provided processing callback with the controller context
+         */
+        static void TaskFunc(SOCKController *ctx, ReadWriteProc proc)
+        {
+            if (!ctx->readSocket())
+                ctx->enableEvents(false, false);
+            else
+                proc(ctx);
+        }
+
+        /**
          * @brief Close callback implementation
-         * @param ctx Pointer to SPSockTcp instance
          * @param fd File descriptor to close
          */
-        static void FuncClose(void *ctx, int fd)
+        static void FuncClose(int fd)
         {
-            auto This = (SPSockTcp<address_family> *)(ctx);
+            auto This = GetInstance();
             std::lock_guard<std::mutex> lock(This->list.mtx);
             This->list.connections.push_back(fd);
         }
 
         /**
          * @brief Event control callback implementation
-         * @param ctx Pointer to SPSockTcp instance
          * @param fd File descriptor to modify
          * @param read Enable read events
          * @param write Enable write events
          * @return true on success, false on failure
          */
-        static bool FuncEnableEvent(void *ctx, int fd, bool read, bool write)
+        static bool FuncEnableEvent(int fd, bool read, bool write)
         {
-            auto This = (SPSockTcp<address_family> *)ctx;
+            auto This = GetInstance();
             epoll_event event;
             event.data.fd = fd;
             event.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLONESHOT;
@@ -274,13 +293,14 @@ namespace HSLL
             if (epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, nullptr) != 0)
                 HSLL_LOGINFO(LOG_LEVEL_WARNING, "epoll_ctl(EPOLL_CTL_DEL) failed: ", strerror(errno));
 
-            ConnectionInfo cInfo = connections.at(fd);
-            std::string info = std::move(cInfo.info);
-            connections.erase(fd);
+            auto it = connections.find(fd);
+            auto &sockController = it->second;
+            std::string info = std::move(sockController.ipPort);
 
             if (proc.csp)
-                proc.csp(cInfo.ctx);
+                proc.csp(&sockController);
 
+            connections.erase(it);
             close(fd);
             return info;
         }
@@ -301,14 +321,15 @@ namespace HSLL
                         HSLL_LOGINFO(LOG_LEVEL_WARNING, "epoll_ctl(EPOLL_CTL_DEL) failed: ", strerror(errno));
 
                     if (proc.csp)
-                        proc.csp(it.second.ctx);
+                        proc.csp(&it.second);
 
                     close(it.first);
-                    HSLL_LOGINFO(LOG_LEVEL_INFO, "Closed connection: ", it.second.info);
+                    HSLL_LOGINFO(LOG_LEVEL_INFO, "Closed connection: ", it.second.ipPort);
                 }
 
                 close(idlefd);
                 close(epollfd);
+                connections.clear();
             }
         }
 
@@ -326,7 +347,10 @@ namespace HSLL
         static SPSockTcp *GetInstance()
         {
             if (instance == nullptr)
+            {
+                SockTask::taskProc = TaskFunc;
                 instance = new SPSockTcp;
+            }
 
             return instance;
         }
@@ -415,7 +439,11 @@ namespace HSLL
             if ((status & 0x4) != 0x4)
                 HSLL_LOGINFO(LOG_LEVEL_WARNING, "Exit signal handler not configured");
 
-            assert((idlefd = ::open("/dev/null", O_RDONLY | O_CLOEXEC)) >= 0);
+            if ((idlefd = ::open("/dev/null", O_RDONLY | O_CLOEXEC)) == -1)
+            {
+                HSLL_LOGINFO(LOG_LEVEL_ERROR, "open \"/dev/null\" error");
+                return 18;
+            }
 
             epoll_event event;
             epoll_event events[SPSOCK_MAX_EVENT_BSIZE];
@@ -498,17 +526,39 @@ namespace HSLL
                     }
                     else if (events[i].events & EPOLLIN)
                     {
+                        auto it = connections.find(fd);
                         if (proc.rdp)
-                            UtilTask.append(connections.at(fd).ctx, proc.rdp);
+                        {
+                            UtilTask.append(&it->second, proc.rdp);
+                        }
+                        else if (proc.wtp)
+                        {
+                            FuncEnableEvent(fd, false, true);
+                        }
+                        else
+                        {
+                            HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(fd));
+                        }
                     }
                     else if (events[i].events & EPOLLOUT)
                     {
+                        auto it = connections.find(fd);
                         if (proc.wtp)
-                            UtilTask.append(connections.at(fd).ctx, proc.wtp);
+                        {
+                            UtilTask.append(&it->second, proc.wtp);
+                        }
+                        else if (proc.rdp)
+                        {
+                            FuncEnableEvent(fd, true, false);
+                        }
+                        else
+                        {
+                            HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(fd));
+                        }
                     }
                 }
 
-                UtilTask.submit();
+                UtilTask.commit();
                 ignore.clear();
             }
 
@@ -655,18 +705,14 @@ namespace HSLL
 
             return "Unknown error";
         }
-
-        SPSOCK_CONSTRUCTOR_DELETE(SPSockTcp)
     };
-
-    typedef void (*RecvProc)(void *ctx, const char *data, ssize_t size, const char *ip, unsigned short port); ///< Recieve event callback type
 
     /**
      * @brief Main UDP socket management class
      * @tparam address_family IP version (IPv4/IPv6)
      */
     template <ADDRESS_FAMILY address_family = ADDRESS_FAMILY::ADDRESS_FAMILY_INET>
-    class SPSockUdp
+    class SPSockUdp : noncopyable
     {
         void *ctx;    ///< User-defined context for callbacks
         RecvProc rcp; ///< Receive event callback
@@ -980,8 +1026,6 @@ namespace HSLL
 
             return "Unknown error";
         }
-
-        SPSOCK_CONSTRUCTOR_DELETE(SPSockUdp)
     };
 
     // Static member initialization
