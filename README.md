@@ -22,7 +22,7 @@
 #define SPSOCK_WRITE_BSIZE     32768   // 32KB写缓冲区
 #define SPSOCK_MAX_EVENT_BSIZE 5000    // 单次epoll最大处理事件数
 #define SPSOCK_EPOLL_TIMEOUT   -1      // epoll无限等待
-#define SPSOCK_THREADPOOL_QUEUE_LENGTH 10000 // 线程池队列深度
+#define SPSOCK_THREADPOOL_QUEUE_LENGTH 10000 // 线程池队列最大任务数量
 ```
 
 ### 运行时配置
@@ -71,7 +71,8 @@ bool enableEvents(bool read, bool write);
 ```cpp
 // 内核级的EINTR/EAGAIN自动重试
 ssize_t ret = send(fd, buf, len, MSG_NOSIGNAL);
-if(ret == -1) {
+if(ret == -1)
+{
     // 自动处理信号中断和临时不可用情况
 }
 ```
@@ -81,9 +82,9 @@ if(ret == -1) {
 ### 错误处理示例
 ```cpp
 int ret = tcp->Listen(8080);
-if(ret != 0) {
-    std::cerr << "Error (" << ret << "): " 
-              << tcp->GetErrorStr(ret) << std::endl;
+if(ret != 0)
+{
+    std::cerr << "Error (" << ret << "): "  << tcp->GetErrorStr(ret) << std::endl;
     exit(EXIT_FAILURE);
 }
 ```
@@ -133,9 +134,11 @@ g++ -D_NOLOG ...
 // 正确的事件启用顺序
 ctrl->writeTemp(data, len);    // 填充缓冲区
 ctrl->commitWrite();           // 尝试立即发送
-if(ctrl->enableEvents(false, true)) {
+if(ctrl->enableEvents(false, true))
+{
     // 注册写事件成功
-} else {
+} else
+{
     ctrl->close();  // 注册失败立即关闭
 }
 ```
