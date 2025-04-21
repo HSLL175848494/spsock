@@ -12,75 +12,7 @@
 
 ## 快速开始
 
-### TCP服务器示例
-```cpp
-#include "SPSock.hpp"
-
-// 连接建立回调
-void* OnConnect(const char* ip, unsigned short port) {
-    printf("New connection from %s:%d\n", ip, port);
-    return nullptr;
-}
-
-// 数据到达回调
-void OnRecv(HSLL::SOCKController* ctrl) {
-    char buf[1024];
-    while(auto len = ctrl->read(buf, sizeof(buf))) {
-        // 处理数据
-        ctrl->writeTemp(buf, len); // 写入回显数据
-        ctrl->enableEvents(false, true); // 启用写事件
-    }
-}
-
-// 数据发送回调
-void OnSend(HSLL::SOCKController* ctrl) {
-    if(ctrl->commitWrite() == -1) {
-        ctrl->close(); // 发送失败关闭连接
-    }
-}
-
-int main() {
-    auto tcp = HSLL::SPSockTcp<>::GetInstance();
-    
-    // 基础配置
-    tcp->Listen(8080);
-    tcp->SetCallback(OnConnect, nullptr, OnRecv, OnSend);
-    tcp->SetSignalExit(SIGINT); // 注册Ctrl+C退出
-    
-    // 高级配置
-    tcp->EnableKeepAlive(true, 120, 3, 10); // 启用Keep-Alive
-    tcp->EnableLinger(true, 5); // 启用Linger
-    
-    // 启动事件循环（选择满载策略）
-    tcp->EventLoop(HSLL::FULL_LOAD_POLICY_WAIT);
-    
-    HSLL::SPSockTcp<>::Release();
-    return 0;
-}
-```
-
-### UDP服务器示例
-```cpp
-#include "SPSock.hpp"
-
-void OnUDPRecv(void* ctx, const char* data, ssize_t size, 
-              const char* ip, unsigned short port) {
-    printf("Received %zd bytes from %s:%d\n", size, ip, port);
-}
-
-int main() {
-    auto udp = HSLL::SPSockUdp<>::GetInstance();
-    
-    udp->Bind(8080);
-    udp->SetCallback(OnUDPRecv);
-    udp->SetSignalExit(SIGINT);
-    
-    udp->EventLoop();
-    
-    HSLL::SPSockUdp<>::Release();
-    return 0;
-}
-```
+见sample
 
 ## 核心配置
 
