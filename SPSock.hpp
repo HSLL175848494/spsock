@@ -180,7 +180,7 @@ namespace HSLL
             }
 
             epoll_event event;
-            event.events = EPOLLIN | EPOLLRDHUP | EPOLLONESHOT;
+            event.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLONESHOT|SPSOCK_EPOLL_DEFAULT_EVENT;
             event.data.fd = fd;
             if (epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event) != 0)
             {
