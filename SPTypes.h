@@ -14,6 +14,8 @@ namespace HSLL
 #define SPSOCK_MAX_EVENT_BSIZE 5000
 /// Epoll wait timeout in milliseconds (-1 means infinite wait)
 #define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS -1
+/// By default, epoll listens for events
+#define SPSOCK_EPOLL_DEFAULT_EVENT EPOLLIN
 /// Maximum number of tasks in thread pool queue
 #define SPSOCK_THREADPOOL_QUEUE_LENGTH 10000
 /// Default number of threads when system core count cannot be determined
