@@ -162,7 +162,7 @@ tcp->SetSignalExit(SIGUSR1);
 
 1.连接建立和关闭回调在事件循环线程被调用,读写回调在线程池中被调用
 
-2.初始时连接默认初始启用读事件,可更改
+2.初始时连接默认初始启用读事件,可在SPTypes.h中的`SPSOCK_EPOLL_DEFAULT_EVENT` 宏定义更改
 
 3.每次读写回调调用结束后需要调用控制器（SOCKController）的`enableEvents`函数以接收下次事件
 
