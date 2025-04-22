@@ -3,6 +3,7 @@
 
 namespace HSLL
 {
+    
     /**
      * @brief Circular buffer implementation for efficient I/O operations
      *

@@ -23,6 +23,7 @@
 
 namespace HSLL
 {
+    
     /**
      * @brief Enumeration for log levels
      */

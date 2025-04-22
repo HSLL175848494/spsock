@@ -7,6 +7,7 @@
 
 namespace HSLL
 {
+
     /**
      * @brief Thread pool class for managing worker threads and task execution
      * @tparam T Type of tasks to be processed by the thread pool

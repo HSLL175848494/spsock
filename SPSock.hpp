@@ -16,9 +16,8 @@
 #include <unordered_set>
 
 #include "SPLog.hpp"
-#include "SPTask.hpp"
-#include "SPController.hpp"
 #include "noncopyable.hpp"
+#include "SPInitializer.hpp"
 
 namespace HSLL
 {
@@ -180,7 +179,7 @@ namespace HSLL
             }
 
             epoll_event event;
-            event.events = EPOLLIN | EPOLLRDHUP | EPOLLONESHOT;
+            event.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLONESHOT | SPSOCK_EPOLL_DEFAULT_EVENT;
             event.data.fd = fd;
             if (epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event) != 0)
             {
@@ -210,7 +209,7 @@ namespace HSLL
             }
 
             void *ctx = proc.cnp(sockController.ip, sockController.port);
-            sockController.init(fd, ctx, FuncClose, FuncEnableEvent, SPSOCK_READ_BSIZE, SPSOCK_WRITE_BSIZE);
+            sockController.init(fd, ctx, FuncClose, FuncEnableEvent, SPSOCK_READ_BSIZE, SPSOCK_WRITE_BSIZE, SPSOCK_EPOLL_DEFAULT_EVENT);
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Accepted new connection from: ", sockController.ipPort);
         }
 
@@ -227,23 +226,6 @@ namespace HSLL
                     SPSockTcp<address_family>::exitProc(SPSockTcp<address_family>::exitCtx);
                 SPSockTcp<address_family>::exitFlag.store(false, std::memory_order_release);
             }
-        }
-
-        /**
-         * @brief Task function for handling socket read operations and processing
-         * @param ctx Pointer to the socket controller containing connection state and buffers
-         * @param proc Callback function to process the received data
-         * @details This function:
-         * 1. Attempts to read data from the socket using the controller's readSocket() method
-         * 2. If read fails (returns false), disables further read/write events on the socket
-         * 3. If read succeeds, invokes the provided processing callback with the controller context
-         */
-        static void TaskFunc(SOCKController *ctx, ReadWriteProc proc)
-        {
-            if (!ctx->readSocket())
-                ctx->enableEvents(false, false);
-            else
-                proc(ctx);
         }
 
         /**
@@ -269,7 +251,7 @@ namespace HSLL
             auto This = GetInstance();
             epoll_event event;
             event.data.fd = fd;
-            event.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLONESHOT;
+            event.events = EPOLLERR | EPOLLHUP | EPOLLONESHOT;
 
             if (read)
                 event.events |= EPOLLIN;
@@ -347,10 +329,7 @@ namespace HSLL
         static SPSockTcp *GetInstance()
         {
             if (instance == nullptr)
-            {
-                SockTask::taskProc = TaskFunc;
                 instance = new SPSockTcp;
-            }
 
             return instance;
         }
@@ -454,7 +433,7 @@ namespace HSLL
             }
 
             event.data.fd = listenfd;
-            event.events = EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP;
+            event.events = EPOLLIN | EPOLLERR | EPOLLHUP;
             if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &event) != 0)
             {
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_ctl(EPOLL_CTL_ADD) failed: ", strerror(errno));
@@ -520,7 +499,7 @@ namespace HSLL
                     {
                         DealConnect();
                     }
-                    else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR))
+                    else if (events[i].events & (EPOLLHUP | EPOLLERR))
                     {
                         HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(fd));
                     }
@@ -533,7 +512,8 @@ namespace HSLL
                         }
                         else if (proc.wtp)
                         {
-                            FuncEnableEvent(fd, false, true);
+                            if (it->second.enableEvents(false, true))
+                                CloseConnection(fd);
                         }
                         else
                         {
@@ -549,7 +529,8 @@ namespace HSLL
                         }
                         else if (proc.rdp)
                         {
-                            FuncEnableEvent(fd, true, false);
+                            if (it->second.enableEvents(true, false))
+                                CloseConnection(fd);
                         }
                         else
                         {

@@ -148,7 +148,7 @@ if(ctrl->enableEvents(false, true))
 // 必须成对调用
 auto instance = SPSockTcp<>::GetInstance();
 // ... 使用实例 ...
-SPSockTcp<>::Release();  // 确保释放系统资源
+instance->Release();  // 确保释放系统资源
 ```
 
 3. **信号处理**

@@ -3,6 +3,7 @@
 
 namespace HSLL
 {
+    
     /**
      * @brief A base class to prevent copying of derived classes
      *

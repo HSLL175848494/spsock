@@ -6,6 +6,25 @@
 
 namespace HSLL
 {
+    
+    /**
+     * @brief Function pointer for socket task processing
+     * @details Acts as a mediator for delayed initialization of task handling logic.
+     *          Initialized via SPInitializer::Init() to reference TaskFunc implementation.
+     *          This indirection solves static initialization order issues by allowing
+     *          binding to post-defined functions.
+     */
+    TaskProc taskProc;
+
+    /**
+     * @brief Function pointer for event re-enabling operations
+     * @details Provides deferred initialization for connection recovery logic.
+     *          Set through SPInitializer::Init() to point at REnableFunc implementation.
+     *          The indirection enables proper initialization sequencing where function
+     *          definitions become available before pointer assignment.
+     */
+    REnableProc renableProc;
+
     /**
      * @brief Read or write task for thread pool
      */
@@ -15,8 +34,6 @@ namespace HSLL
         SOCKController *ctx; ///< Context for task
 
     public:
-        static TaskProc taskProc;
-
         ~SockTask() = default;
         SockTask() = default;
 
@@ -35,8 +52,6 @@ namespace HSLL
             taskProc(ctx, proc);
         }
     };
-
-    TaskProc SockTask::taskProc;
 
     /**
      * @brief Utility for handling single task operations
@@ -59,11 +74,16 @@ namespace HSLL
          * @param ctx Context for the task
          * @param proc Callback function
          */
-        void append(SOCKController *ctx, ReadProc proc)
+        void append(SOCKController *ctx, ReadWriteProc proc)
         {
             SockTask task(ctx, proc);
-            if (!pool->append(task) && policy == FULL_LOAD_POLICY_WAIT)
-                pool->wait_append(task);
+            if (!pool->append(task))
+            {
+                if (policy == FULL_LOAD_POLICY_WAIT)
+                    pool->wait_append(task);
+                else
+                    renableProc(ctx);
+            }
         }
 
         /**
@@ -98,7 +118,7 @@ namespace HSLL
          * @param ctx Context for the task
          * @param proc Callback function
          */
-        void append(SOCKController *ctx, ReadProc proc)
+        void append(SOCKController *ctx, ReadWriteProc proc)
         {
             tasks[front] = {ctx, proc};
             front = (front + 1) % SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT;
@@ -133,6 +153,12 @@ namespace HSLL
             {
                 if (policy == FULL_LOAD_POLICY_DISCARD)
                 {
+                    unsigned int remaining = num - submitted;
+                    for (unsigned int i = 0; i < remaining; ++i)
+                    {
+                        unsigned int index = (back + submitted + i) % SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT;
+                        renableProc(tasks[index].ctx);
+                    }
                     back = front;
                     size = 0;
                     return;

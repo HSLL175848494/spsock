@@ -3,7 +3,7 @@
 
 namespace HSLL
 {
-
+    
 /// Marks functions that should only be called once
 #define SPSOCK_ONE_TIME_CALL
 /// Read buffer size (16KB)
@@ -14,6 +14,8 @@ namespace HSLL
 #define SPSOCK_MAX_EVENT_BSIZE 5000
 /// Epoll wait timeout in milliseconds (-1 means infinite wait)
 #define SPSOCK_EPOLL_TIMEOUT_MILLISECONDS -1
+/// By default, epoll listens for events(EPOLLIN EPOLLOUT EPOLLIN|EPOLLOUT)
+#define SPSOCK_EPOLL_DEFAULT_EVENT EPOLLIN
 /// Maximum number of tasks in thread pool queue
 #define SPSOCK_THREADPOOL_QUEUE_LENGTH 10000
 /// Default number of threads when system core count cannot be determined
@@ -26,12 +28,13 @@ namespace HSLL
     // Compile-time assertions to validate configuration values
     static_assert(SPSOCK_READ_BSIZE > 0);
     static_assert(SPSOCK_WRITE_BSIZE > 0);
+    static_assert(SPSOCK_MAX_EVENT_BSIZE > 0);
+    static_assert(SPSOCK_EPOLL_TIMEOUT_MILLISECONDS > 0 || SPSOCK_EPOLL_TIMEOUT_MILLISECONDS == -1);
+    static_assert(SPSOCK_EPOLL_DEFAULT_EVENT == EPOLLIN || SPSOCK_EPOLL_DEFAULT_EVENT == EPOLLOUT || SPSOCK_EPOLL_DEFAULT_EVENT == EPOLLIN | EPOLLOUT);
     static_assert(SPSOCK_THREADPOOL_QUEUE_LENGTH > 0);
     static_assert(SPSOCK_THREADPOOL_DEFAULT_THREADS_NUM > 0);
     static_assert(SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT > 0);
     static_assert(SPSOCK_THREADPOOL_BATCH_SIZE_PROCESS > 0);
-    static_assert(SPSOCK_MAX_EVENT_BSIZE > 0);
-    static_assert(SPSOCK_EPOLL_TIMEOUT_MILLISECONDS > 0 || SPSOCK_EPOLL_TIMEOUT_MILLISECONDS == -1);
 
     // Forward declaration of SOCKController class
     class SOCKController;
@@ -42,8 +45,6 @@ namespace HSLL
     typedef void (*WriteProc)(SOCKController *controller);
     /// Combined callback function type for read/write events
     typedef void (*ReadWriteProc)(SOCKController *controller);
-    /// Task processing function type for thread pool
-    typedef void (*TaskProc)(SOCKController *ctx, ReadWriteProc proc);
     /// Callback function type for connection close events
     typedef void (*CloseProc)(SOCKController *controller);
     /// Callback function type for event loop exit events
@@ -52,6 +53,10 @@ namespace HSLL
     typedef void (*RecvProc)(void *ctx, const char *data, ssize_t size, const char *ip, unsigned short port);
     ///< Connection callback type
     typedef void *(*ConnectProc)(const char *ip, unsigned short port);
+    /// Task processing function type for thread pool
+    typedef void (*TaskProc)(SOCKController *ctx, ReadWriteProc proc);
+    ///< Re-listen for the event function pointer
+    typedef void (*REnableProc)(SOCKController *controller);
 
     /**
      * @brief Protocol types for socket creation

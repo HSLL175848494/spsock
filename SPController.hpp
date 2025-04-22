@@ -6,6 +6,7 @@
 
 namespace HSLL
 {
+    
     /**
      * @brief Controller class for socket operations
      * @note Provides thread-safe I/O operations and connection management
@@ -16,6 +17,7 @@ namespace HSLL
         typedef bool (*FuncEvent)(int, bool, bool); ///< Event control function type
 
         int fd;                    ///< Socket file descriptor
+        int events;                ///< Bitmask of currently active epoll events (EPOLLIN/EPOLLOUT)
         void *ctx;                 ///< Context pointer for callback functions
         unsigned short port;       ///< Port number for the socket connection
         char ip[INET6_ADDRSTRLEN]; ///< IP address string (IPv4 or IPv6)
@@ -28,6 +30,7 @@ namespace HSLL
 
         template <ADDRESS_FAMILY>
         friend class SPSockTcp;
+        friend class SPInitializer;
 
         /**
          * @brief Initializes the controller with socket parameters
@@ -37,8 +40,9 @@ namespace HSLL
          * @param fe Event control function
          * @param rbSize Read buffer size
          * @param wbSize Write buffer size
+         * @param events Initial epoll event subscriptions
          */
-        void init(int fd, void *ctx, FuncClose fc, FuncEvent fe, unsigned int rbSize, unsigned int wbSize)
+        void init(int fd, void *ctx, FuncClose fc, FuncEvent fe, unsigned int rbSize, unsigned int wbSize, int events)
         {
             this->fd = fd;
             this->ctx = ctx;
@@ -46,6 +50,7 @@ namespace HSLL
             this->fe = fe;
             this->readBuf.Init(rbSize);
             this->writeBuf.Init(wbSize);
+            this->events = events;
             ipPort = "[" + std::string(ip) + "]:" + std::to_string(port);
         }
 
@@ -211,7 +216,28 @@ namespace HSLL
          */
         bool enableEvents(bool read = false, bool write = false)
         {
-            return fe(fd, read, write);
+            bool ret = fe(fd, read, write);
+            events = 0;
+            if (ret)
+            {
+                if (read)
+                    events |= EPOLLIN;
+                if (write)
+                    events |= EPOLLOUT;
+            }
+            return ret;
+        }
+
+        /**
+         * @brief Re-enables event monitoring with previously configured events
+         * @return true on success, false on failure (requires Close())
+         */
+        bool renableEvents()
+        {
+            bool ret = fe(fd, events & EPOLLIN, events & EPOLLOUT);
+            if (!ret)
+                events = 0;
+            return ret;
         }
 
         /**
