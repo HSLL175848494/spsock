@@ -62,19 +62,19 @@ int main()
 ### UDP服务器
 
 ```
-    SPSockUdp<ADDRESS_FAMILY_INET>::Config();
+    SPSockUdp<ADDRESS_FAMILY_INET>::Config();//填充默认配置
     
-    auto ins = SPSockUdp<ADDRESS_FAMILY_INET>::GetInstance();
+    auto ins = SPSockUdp<ADDRESS_FAMILY_INET>::GetInstance();//获取实例
 
-    if (ins->Bind(4567)==false)
+    if (ins->Bind(4567)==false)//绑定端口
         return -1;
 
-    if (ins->SetCallback(echo_rcp, ins)==false)
+    if (ins->SetCallback(echo_rcp, ins)==false)//设置recv回调
         return -1;
 
-    if (ins->SetSignalExit(SIGINT)==false)
+    if (ins->SetSignalExit(SIGINT)==false)//设置退出信号
         return -1;
 
-    ins->EventLoop();
-    ins->Release(); //    SPSockUdp<ADDRESS_FAMILY_INET>::Release()
+    ins->EventLoop();//事件循环
+    ins->Release(); //释放实例
 ```
