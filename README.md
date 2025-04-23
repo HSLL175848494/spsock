@@ -45,7 +45,9 @@ int main()
 
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();//获取实例
 
-    if (ins->EnableKeepAlive(true, 120, 2, 10) == false)//设置保持活跃链接参数
+    if (ins->EnableKeepAlive(true, 120, 2, 10) == false)//设置KeepAlive
+        return -1;
+    if (ins->EnableLinger(true, 5)== false)//设置优雅关闭连接
         return -1;
     if (ins->SetCallback(nullptr, nullptr, echo_read_write_proc, echo_read_write_proc) == false)//设置连接、关闭连接以及读写回调
         return -1;
