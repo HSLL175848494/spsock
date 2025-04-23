@@ -34,4 +34,29 @@ main.cpp:
 ```
 g++ -o2 main.cpp -o test -lSPsock
 ```
-##
+##快速开始
+
+### TCP服务器
+
+```
+int main()
+{
+    SPSockTcp<ADDRESS_FAMILY_INET>::Config();//填充默认配置
+
+    auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();//获取实例
+
+    if (ins->EnableKeepAlive(true, 120, 2, 10) == false)//设置保持活跃链接参数
+        return -1;
+    if (ins->SetCallback(nullptr, nullptr, echo_read_write_proc, echo_read_write_proc) == false)//设置连接、关闭连接以及读写回调
+        return -1;
+    if (ins->SetSignalExit(SIGINT) == false)//设置退出信号
+        return -1;
+    if (ins->Listen(4567) == false)//开始监听
+        return -1;
+
+    ins->EventLoop();//事件循环
+    ins->Release(); //释放实例
+    return 0;
+}
+```
+### UDP服务器
