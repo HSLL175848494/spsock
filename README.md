@@ -167,8 +167,9 @@ int main()
 
 ## 日志示例
 
-<font color=#0099ff>[INFO]</font> Accepted new connection from: [192.168.1.10]:55213
-<font color=#0099ff>[CRUCIAL]</font> Event loop exited
+```
+[INFO] Accepted new connection from: [192.168.1.10]:55213
+[CRUCIAL] Event loop exited
 
 ```
 
@@ -179,5 +180,4 @@ int main()
 3. EventLoop() 为阻塞调用，通常需要放在独立线程
 4. 写操作失败时应调用 Close() 或 EnableEvent()
 5. 释放资源请调用对应类的 Release() 方法
-
-
+6. 读写回调将在线程池内被调用,连接建立和关闭回调在事件循环线程被调用
