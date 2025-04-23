@@ -19,3 +19,19 @@
 | debug=1    | 启用调试模式              | `make debug=1`       |
 | static=1   | 生成静态库                | `make static=1`      |
 | test=1     | 编译测试样例              | `make test=1`        |
+
+## 库引入
+
+包含include目录下的SPSock.h并链接libSPsock.so/libSPsock.a
+
+###示例
+
+main.cpp:
+```
+#include"SPSock.h"
+```
+编译链接:
+```
+g++ -o2 main.cpp -o test -lSPsock
+```
+##
