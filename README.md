@@ -35,7 +35,7 @@ EnableKeepAlive(true,
 );
 
 // Linger配置
-EnableLinger(true, 5);  //关闭连接后在5s内尽可能发送数据包
+EnableLinger(true, 5);  // 启用并等待5秒
 
 // 满载策略选择
 EventLoop(HSLL::FULL_LOAD_POLICY_WAIT);    // 队列满时等待
