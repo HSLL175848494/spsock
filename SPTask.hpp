@@ -2,11 +2,14 @@
 #define HSLL_SPTASK
 
 #include "SPTypes.h"
-#include "ThreadPool.hpp"
+#include "base/ThreadPool.hpp"
+#include "noncopyable.h"
+
+using namespace HSLL::CONFIG;
 
 namespace HSLL
 {
-    
+
     /**
      * @brief Function pointer for socket task processing
      * @details Acts as a mediator for delayed initialization of task handling logic.
@@ -56,18 +59,10 @@ namespace HSLL
     /**
      * @brief Utility for handling single task operations
      */
-    struct UtilTask_Single
+    struct UtilTask_Single : noncopyable
     {
         FULL_LOAD_POLICY policy;    ///< Policy when thread pool is full
         ThreadPool<SockTask> *pool; ///< Pointer to thread pool
-
-        /**
-         * @brief Construct a new UtilTask_Single object
-         * @param pool Pointer to the thread pool to use for task execution
-         * @param policy The full load policy to apply when pool is at capacity
-         */
-        UtilTask_Single(ThreadPool<SockTask> *pool, FULL_LOAD_POLICY policy)
-            : pool(pool), policy(policy) {}
 
         /**
          * @brief Append a task to the thread pool
@@ -95,23 +90,21 @@ namespace HSLL
     /**
      * @brief Utility for handling multiple tasks in batch
      */
-    struct UtilTask_Multipe
+    struct UtilTask_Multipe : noncopyable
     {
-        unsigned int back = 0;                               ///< Back index of task buffer
-        unsigned int front = 0;                              ///< Front index of task buffer
-        unsigned int size = 0;                               ///< Current number of buffered tasks
-        SockTask tasks[SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT]; ///< Task buffer
+        unsigned int back = 0;     ///< Back index of task buffer
+        unsigned int front = 0;    ///< Front index of task buffer
+        unsigned int size = 0;     ///< Current number of buffered tasks
+        SockTask *tasks = nullptr; ///< Dynamic task buffer
 
         FULL_LOAD_POLICY policy;    ///< Policy when thread pool is full
         ThreadPool<SockTask> *pool; ///< Pointer to thread pool
 
-        /**
-         * @brief Construct a new UtilTask_Multipe object
-         * @param pool Pointer to the thread pool to use for task execution
-         * @param policy The full load policy to apply when pool is at capacity
-         */
-        UtilTask_Multipe(ThreadPool<SockTask> *pool, FULL_LOAD_POLICY policy)
-            : pool(pool), policy(policy) {}
+        ~UtilTask_Multipe()
+        {
+            if (tasks)
+                delete[] tasks;
+        }
 
         /**
          * @brief Append a task to the buffer
@@ -120,11 +113,11 @@ namespace HSLL
          */
         void append(SOCKController *ctx, ReadWriteProc proc)
         {
-            tasks[front] = {ctx, proc};
-            front = (front + 1) % SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT;
+            tasks[front] = SockTask(ctx, proc);
+            front = (front + 1) % configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT;
             size++;
 
-            if (size == SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT)
+            if (size == configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT)
                 commit();
         }
 
@@ -136,7 +129,7 @@ namespace HSLL
             if (size == 0)
                 return;
 
-            unsigned int distance = SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT - back;
+            unsigned int distance = configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT - back;
             unsigned int num = distance > size ? size : distance;
             unsigned int submitted;
 
@@ -156,7 +149,7 @@ namespace HSLL
                     unsigned int remaining = num - submitted;
                     for (unsigned int i = 0; i < remaining; ++i)
                     {
-                        unsigned int index = (back + submitted + i) % SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT;
+                        unsigned int index = (back + submitted + i) % configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT;
                         renableProc(tasks[index].ctx);
                     }
                     back = front;
@@ -175,7 +168,7 @@ namespace HSLL
             }
 
             size -= num;
-            back = (back + num) % SPSOCK_THREADPOOL_BATCH_SIZE_SUBMIT;
+            back = (back + num) % configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT;
 
             if (size)
                 commit();
@@ -183,28 +176,60 @@ namespace HSLL
     };
 
     /**
-     * @brief Template utility to select task handler type
-     * @tparam B Boolean template parameter to select type
+     * @brief Unified task submission utility
+     * @details Provides a unified interface for both single and batch task submission.
+     *          Automatically selects the appropriate implementation based on batch size.
      */
-    template <bool B>
-    struct UtilTask;
-
-    /**
-     * @brief Specialization for multiple task handling
-     */
-    template <>
-    struct UtilTask<true>
+    class UtilTask : noncopyable
     {
-        using type = UtilTask_Multipe; ///< Type alias for multiple task handler
-    };
+        UtilTask_Single ts;  ///< Single task submission handler
+        UtilTask_Multipe tm; ///< Batch task submission handler
 
-    /**
-     * @brief Specialization for single task handling
-     */
-    template <>
-    struct UtilTask<false>
-    {
-        using type = UtilTask_Single; ///< Type alias for single task handler
+    public:
+        /**
+         * @brief Construct a new UtilTask object
+         * @param pool Pointer to thread pool
+         * @param policy Full-load policy (WAIT/DISCARD)
+         */
+        UtilTask(ThreadPool<SockTask> *pool, FULL_LOAD_POLICY policy)
+        {
+            if (configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT == 1)
+            {
+                ts.pool = pool;
+                ts.policy = policy;
+            }
+            else
+            {
+                tm.pool = pool;
+                tm.policy = policy;
+                tm.tasks = new SockTask[configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT];
+            }
+        }
+
+        /**
+         * @brief Append a task for submission
+         * @param ctx Socket controller context
+         * @param proc Procedure to execute
+         */
+        void append(SOCKController *ctx, ReadWriteProc proc)
+        {
+            if (configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT == 1)
+                ts.append(ctx, proc);
+            else
+                tm.append(ctx, proc);
+        }
+
+        /**
+         * @brief Commit pending tasks to thread pool
+         * @details For batch mode, forces submission of buffered tasks
+         */
+        void commit()
+        {
+            if (configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT == 1)
+                ts.commit();
+            else
+                tm.commit();
+        }
     };
 }
 

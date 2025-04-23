@@ -1,9 +1,11 @@
 #ifndef HSLL_BUFFER
 #define HSLL_BUFFER
 
+#include <string.h>
+
 namespace HSLL
 {
-    
+
     /**
      * @brief Circular buffer implementation for efficient I/O operations
      *

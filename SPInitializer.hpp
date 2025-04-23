@@ -1,19 +1,21 @@
 #ifndef HSLL_SPINITIALIZER
 #define HSLL_SPINITIALIZER
 
+#include <assert.h>
+
 #include "SPTask.hpp"
-#include "SPController.hpp"
+#include "SPController.h"
 
 namespace HSLL
 {
-    
+
     /**
      * @brief Provides delayed initialization for function pointers
      * @details This class serves as a mediator for function pointers that need to reference
      *          post-defined functions. It ensures these pointers are initialized after
      *          their target functions are defined, solving static initialization order issues.
      */
-    class SPInitializer
+    class SPInitializer : noncopyable
     {
     public:
         /**
@@ -49,19 +51,22 @@ namespace HSLL
          * @return Always returns true to indicate successful initialization
          * @note This must be called after target function definitions exist
          */
-        static bool Init()
+        static void Init(SPConfig &config)
         {
+            assert(config.READ_BSIZE > 0);
+            assert(config.WRITE_BSIZE > 0);
+            assert(config.MAX_EVENT_BSIZE > 0);
+            assert(config.EPOLL_TIMEOUT_MILLISECONDS > 0 || config.EPOLL_TIMEOUT_MILLISECONDS == -1);
+            assert(config.EPOLL_DEFAULT_EVENT == EPOLLIN || config.EPOLL_DEFAULT_EVENT == EPOLLOUT || config.EPOLL_DEFAULT_EVENT == (EPOLLIN | EPOLLOUT));
+            assert(config.THREADPOOL_QUEUE_LENGTH > 0);
+            assert(config.THREADPOOL_DEFAULT_THREADS_NUM > 0);
+            assert(config.THREADPOOL_BATCH_SIZE_SUBMIT > 0);
+            assert(config.THREADPOOL_BATCH_SIZE_PROCESS > 0);
             taskProc = TaskFunc;
             renableProc = REnableFunc;
-            return true;
+            configGlobal = config;
         }
     };
-
-    /**
-     * @brief Global initializer that triggers function pointer setup
-     * @details Leverages static initialization to ensure Init() runs before main()
-     */
-    bool SPInitializer_Init = SPInitializer::Init();
 }
 
 #endif

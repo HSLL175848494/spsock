@@ -1,99 +1,45 @@
 
-#include "SPSock.hpp"
+#include "../include/SPSock.h"
+
 using namespace HSLL;
 
-class EchoServer
+void echo_read_write_proc(SOCKController *controller)
 {
-    std::string waitSent;
-
-    void Send(SOCKController *controller)
+    if (controller->isPeerClosed())
     {
-        unsigned int ptr = 0;
-        while (ptr < waitSent.size())
-        {
-            std::string_view sv(waitSent.data() + ptr, waitSent.size() - ptr);
-            ssize_t bytes = controller->writeTemp(sv.data(), sv.size());
+        controller->close();
+        return;
+    }
 
-            if (bytes == 0)
-            {
-                break;
-            }
-            else if (bytes == -1)
-            {
-                controller->enableEvents(false, false);
-                return;
-            }
-
-            ptr += bytes;
-        }
-
-        waitSent = waitSent.substr(ptr);
-
-        if (controller->commitWrite())
-            controller->enableEvents(true, true);
+    if (!controller->writeBack())
+    {
+        controller->close();
+    }
+    else
+    {
+        bool ret;
+        if (controller->getReadBufferSize())
+            ret = controller->enableEvents(false, true);
         else
-            controller->enableEvents(true, false);
+            ret = controller->enableEvents(true, false);
+        if (!ret)
+            controller->close();
     }
-
-public:
-    void DealRead(SOCKController *controller)
-    {
-        char buf[1024];
-        ssize_t bytes;
-
-        while ((bytes = controller->read(buf, 1024)) > 0)
-            waitSent.append(buf, bytes);
-
-        if (bytes == -1)
-        {
-            controller->enableEvents(false, false);
-            return;
-        }
-
-        Send(controller);
-    }
-
-    void DealWrite(SOCKController *controller)
-    {
-        Send(controller);
-    }
-};
-
-void echo_rdp(SOCKController *controller)
-{
-    EchoServer *ec = (EchoServer *)controller->getCtx();
-    ec->DealRead(controller);
-}
-
-void echo_wtp(SOCKController *controller)
-{
-    EchoServer *ec = (EchoServer *)controller->getCtx();
-    ec->DealWrite(controller);
-}
-
-void echo_csp(SOCKController *controller)
-{
-    delete (EchoServer *)controller->getCtx();
-}
-
-void *echo_cnp(const char *ip, unsigned short port)
-{
-    return new EchoServer();
 }
 
 int main()
 {
+    SPSockTcp<ADDRESS_FAMILY_INET>::Config({16 * 1024, 32 * 1024, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_INFO});
+
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();
 
-    if (ins->EnableKeepAlive(true, 120, 2, 10) != 0)
+    if (ins->EnableKeepAlive(true, 120, 2, 10) == false)
         return -1;
-    if (ins->EnableLinger(true, 5) != 0)
+    if (ins->SetCallback(nullptr, nullptr, echo_read_write_proc, echo_read_write_proc) == false)
         return -1;
-    if (ins->SetCallback(echo_cnp, echo_csp, echo_rdp, echo_wtp) != 0)
+    if (ins->SetSignalExit(SIGINT) == false)
         return -1;
-    if (ins->SetSignalExit(SIGINT) != 0)
-        return -1;
-    if (ins->Listen(4567) != 0)
+    if (ins->Listen(4567) == false)
         return -1;
 
     ins->EventLoop();

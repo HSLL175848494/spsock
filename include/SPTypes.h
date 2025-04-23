@@ -1,12 +1,7 @@
 #ifndef HSLL_SPTYPES
 #define HSLL_SPTYPES
 
-#include <list>
-#include <mutex>
-#include <string.h>
 #include <sys/types.h>
-#include <sys/epoll.h>
-#include <sys/socket.h>
 
 namespace HSLL
 {
@@ -31,21 +26,6 @@ namespace HSLL
     typedef void (*ExitProc)(void *ctx);
     ///< Recieve event callback type
     typedef void (*RecvProc)(void *ctx, const char *data, ssize_t size, const char *ip, unsigned short port);
-    /// Task processing function type for thread pool
-    typedef void (*TaskProc)(SOCKController *ctx, ReadWriteProc proc);
-    ///< Re-listen for the event function pointer
-    typedef void (*REnableProc)(SOCKController *controller);
-
-    /**
-     * @brief Enumeration for log levels
-     */
-    enum LOG_LEVEL
-    {
-        LOG_LEVEL_INFO = 0,    // Informational messages
-        LOG_LEVEL_WARNING = 1, // Warning messages
-        LOG_LEVEL_CRUCIAL = 2, // Crucial messages
-        LOG_LEVEL_ERROR = 3,   // Error messages
-    };
 
     /**
      * @brief Protocol types for socket creation
@@ -75,35 +55,15 @@ namespace HSLL
     };
 
     /**
-     * @brief Structure holding network event callback functions
+     * @brief Enumeration for log levels
      */
-    struct SPSockProc
+    enum LOG_LEVEL
     {
-        ReadProc rdp;    ///< Callback for read events (data available to read)
-        WriteProc wtp;   ///< Callback for write events (ready to send data)
-        ConnectProc cnp; ///< Callback for new connections (TCP only)
-        CloseProc csp;   ///< Callback for connection closure events
-    };
-
-    /**
-     * @brief TCP keep-alive configuration structure
-     */
-    struct SPSockAlive
-    {
-        int keepAlive;      ///< Enable/disable keep-alive (0 = disable, 1 = enable)
-        int aliveSeconds;   ///< Idle time (seconds) before sending keepalive probes
-        int detectTimes;    ///< Number of unacknowledged probes before declaring dead
-        int detectInterval; ///< Interval (seconds) between keepalive probes
-    };
-
-    /**
-     * @brief Thread-safe connection close list
-     * Used to safely manage connection closures across multiple threads
-     */
-    struct CloseList
-    {
-        std::mutex mtx;             ///< Mutex for thread synchronization
-        std::list<int> connections; ///< List of file descriptors to be closed
+        LOG_LEVEL_INFO = 0,    // Informational messages
+        LOG_LEVEL_WARNING = 1, // Warning messages
+        LOG_LEVEL_CRUCIAL = 2, // Crucial messages
+        LOG_LEVEL_ERROR = 3,   // Error messages
+        LOG_LEVEL_NONE = 4,    // NONE
     };
 
     /**
@@ -132,14 +92,6 @@ namespace HSLL
         ///< Minimum log printing level
         LOG_LEVEL MIN_LOG_LEVEL;
     };
-
-    namespace CONFIG
-    {
-        /**
-         * @brief Global configuration
-         */
-       extern SPConfig configGlobal;
-    }
 }
 
 #endif
