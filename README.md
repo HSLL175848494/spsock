@@ -7,7 +7,6 @@
 - 🛡️ 线程安全的连接管理
 - 🔧 支持IPv4/IPv6双协议栈
 - 🔌 可配置的Keep-Alive/Linger机制
-- 📊 内置智能负载均衡策略
 - 📝 多粒度日志控制系统
 
 ## 编译选项
@@ -27,11 +26,11 @@
 ### 示例
 
 main.cpp:
-```
+```cpp
 #include"SPSock.h"
 ```
 编译链接:
-```
+```cpp
 g++ -o2 main.cpp -o test -lSPsock
 ```
 ##快速开始
@@ -83,7 +82,7 @@ int main()
     ins->Release(); //释放实例
 }
 ```
-## 核心API说明
+## 核心API说明(连接控制器SOCKController)
 
 ### 连接状态管理
 - **isPeerClosed()**  
@@ -132,7 +131,7 @@ int main()
   动态启用/禁用Socket的读/写事件监听。失败需关闭连接。
 
 - **renableEvents()**  
-  恢复Socket的事件监听为最近一次配置。用于错误恢复后重试。
+  恢复Socket的事件监听为最近一次配置。
 
 ---
 
@@ -147,6 +146,32 @@ int main()
 - **双缓冲设计**：读/写分离缓冲减少锁竞争，`writeTemp`+`commitWrite`支持批量提交优化。
 - **高效反射**：`writeBack`和`moveToWriteBuffer`避免内存拷贝，提升转发性能。
 
+## 全局配置
+
+通过调用 `SPSock::Config(SPConfig)`指定
+
+ `SPConfig` 结构体成员
+
+| 成员名称                      | 类型        | 说明                                                                 |
+|-------------------------------|-------------|----------------------------------------------------------------------|
+| `READ_BSIZE`                  | `int`       | 读缓冲区大小                                                         |
+| `WRITE_BSIZE`                 | `int`       | 写缓冲区大小                                                         |
+| `MAX_EVENT_BSIZE`             | `int`       | 每个 epoll 循环处理的最大事件数                                      |
+| `EPOLL_TIMEOUT_MILLISECONDS`  | `int`       | epoll 等待超时时间（毫秒），-1 表示无限等待                          |
+| `EPOLL_DEFAULT_EVENT`         | `int`       | epoll 默认监听的事件类型（如 `EPOLLIN`、`EPOLLOUT` 或 `EPOLLIN\|EPOLLOUT`） |
+| `THREADPOOL_QUEUE_LENGTH`     | `int`       | 线程池任务队列的最大长度                                             |
+| `THREADPOOL_DEFAULT_THREADS_NUM` | `int`    | 当无法确定系统核心数时，线程池的默认线程数                           |
+| `THREADPOOL_BATCH_SIZE_SUBMIT` | `int`     | 单次提交到线程池的任务批处理大小                                     |
+| `THREADPOOL_BATCH_SIZE_PROCESS` | `int`    | 线程池单次处理的任务批处理大小                                       |
+| `MIN_LOG_LEVEL`               | `LOG_LEVEL` | 最低日志打印级别                                                     |
+
+## 日志示例
+
+<font color=#0099ff>[INFO]</font> Accepted new connection from: [192.168.1.10]:55213
+<font color=#0099ff>[CRUCIAL]</font> Event loop exited
+
+```
+
 ## 注意事项
 
 1. **必须首先调用** `SPSock::Config()` 进行全局配置
@@ -154,3 +179,5 @@ int main()
 3. EventLoop() 为阻塞调用，通常需要放在独立线程
 4. 写操作失败时应调用 Close() 或 EnableEvent()
 5. 释放资源请调用对应类的 Release() 方法
+
+
