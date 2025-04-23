@@ -38,7 +38,7 @@ g++ -o2 main.cpp -o test -lSPsock
 
 ### TCP服务器
 
-```
+```cpp
 int main()
 {
     SPSockTcp<ADDRESS_FAMILY_INET>::Config();//填充默认配置
@@ -61,7 +61,9 @@ int main()
 ```
 ### UDP服务器
 
-```
+```cpp
+int main()
+{
     SPSockUdp<ADDRESS_FAMILY_INET>::Config();//填充默认配置
     
     auto ins = SPSockUdp<ADDRESS_FAMILY_INET>::GetInstance();//获取实例
@@ -77,4 +79,5 @@ int main()
 
     ins->EventLoop();//事件循环
     ins->Release(); //释放实例
+}
 ```
