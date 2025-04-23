@@ -41,7 +41,7 @@ g++ -o2 main.cpp -o test -lSPsock
 ```cpp
 int main()
 {
-    SPSockTcp<ADDRESS_FAMILY_INET>::Config();//填充默认配置
+    SPSock::Config();//填充默认配置
 
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();//获取实例
 
@@ -66,7 +66,7 @@ int main()
 ```cpp
 int main()
 {
-    SPSockUdp<ADDRESS_FAMILY_INET>::Config();//填充默认配置
+    SPSock::Config();//填充默认配置
     
     auto ins = SPSockUdp<ADDRESS_FAMILY_INET>::GetInstance();//获取实例
 
@@ -83,3 +83,74 @@ int main()
     ins->Release(); //释放实例
 }
 ```
+## 核心API说明
+
+### 连接状态管理
+- **isPeerClosed()**  
+  检测远端是否关闭连接，返回`true`时应触发资源释放。
+
+- **close()**  
+  主动关闭连接，应在错误或通信结束时调用。
+
+---
+
+### 直接数据读写
+- **read(void *buf, size_t len)**  
+  从读缓冲区读取数据，返回实际读取字节数。非阻塞，若缓冲区空则返回0。
+
+- **write(const void *buf, size_t len)**  
+  直接向Socket发送数据。  
+  - 返回：成功发送的字节数；`0`表示需等待可写事件（EAGAIN）；`-1`表示错误（需调用`close()`或启用事件重试）。
+
+---
+
+### 缓冲队列操作
+- **writeTemp(const void *buf, size_t len)**  
+  将数据暂存至写缓冲区，返回实际写入缓冲区的字节数（受缓冲区剩余空间限制）。
+
+- **commitWrite()**  
+  将写缓冲区的数据提交发送至Socket。  
+  - 返回：剩余未发送字节数；`-1`表示错误（需关闭或重设事件）。
+
+- **getReadBufferSize() / getWriteBufferSize()**  
+  获取读/写缓冲区的当前数据量（字节数）。
+
+---
+
+### 数据反射控制
+- **writeBack()**  
+  将读缓冲区的数据直接回写至Socket（如实现Echo服务）。优先发送写缓冲区内容，再尝试直写读缓冲数据。  
+  - 返回：`false`表示Socket错误需关闭连接。
+
+- **moveToWriteBuffer()**  
+  将读缓冲区的数据移至写缓冲区（不触发I/O），返回移动的字节数。适用于数据加工后转发场景。
+
+---
+
+### 事件管理
+- **enableEvents(bool read, bool write)**  
+  动态启用/禁用Socket的读/写事件监听。失败需关闭连接。
+
+- **renableEvents()**  
+  恢复Socket的事件监听为最近一次配置。用于错误恢复后重试。
+
+---
+
+### 上下文访问
+- **getCtx()**  
+  获取用户绑定的上下文指针，可用于传递会话状态或业务数据。
+
+---
+
+### 关键特性
+- **线程安全**：所有I/O操作内置同步机制，支持多线程调用。
+- **双缓冲设计**：读/写分离缓冲减少锁竞争，`writeTemp`+`commitWrite`支持批量提交优化。
+- **高效反射**：`writeBack`和`moveToWriteBuffer`避免内存拷贝，提升转发性能。
+
+## 注意事项
+
+1. **必须首先调用** `SPSock::Config()` 进行全局配置
+2. GetInstance() 非线程安全，建议在主线程初始化
+3. EventLoop() 为阻塞调用，通常需要放在独立线程
+4. 写操作失败时应调用 Close() 或 EnableEvent()
+5. 释放资源请调用对应类的 Release() 方法
