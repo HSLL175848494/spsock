@@ -4,18 +4,23 @@
 namespace HSLL
 {
     // SOCKController Implementation
-    void SOCKController::init(int fd, void *ctx, FuncClose fc, FuncEvent fe,
-                              unsigned int rbSize, unsigned int wbSize, int events)
+    bool SOCKController::init(int fd, void *ctx, FuncClose fc, FuncEvent fe, int events)
     {
         this->fd = fd;
         this->ctx = ctx;
         this->fc = fc;
         this->fe = fe;
-        this->readBuf.Init(rbSize);
-        this->writeBuf.Init(wbSize);
+
+        if (!readBuf.Init())
+            return false;
+
+        if (!writeBuf.Init())
+            return false;
+
         this->events = events;
         peerClosed = false;
         ipPort = "[" + std::string(ip) + "]:" + std::to_string(port);
+        return true;
     }
 
     ssize_t SOCKController::readInner(void *buf, size_t len)

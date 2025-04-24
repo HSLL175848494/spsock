@@ -1,14 +1,12 @@
 #ifndef HSLL_BUFFER
 #define HSLL_BUFFER
 
-#include <string.h>
+#include "SPBufferPool.hpp"
 
 namespace HSLL
 {
-
     /**
      * @brief Circular buffer implementation for efficient I/O operations
-     *
      * This class provides a thread-unsafe circular buffer with separate
      * read and write pointers, optimized for network I/O operations.
      */
@@ -19,16 +17,22 @@ namespace HSLL
         unsigned int size = 0;           ///< Current number of bytes stored in buffer
         unsigned int bsize = 0;          ///< Total capacity of the buffer
         unsigned char *buffer = nullptr; ///< Underlying data storage
+        BUFFER_TYPE type;
 
     public:
+        SPBuffer(BUFFER_TYPE type) : back(0), front(0), size(0), buffer(0), type(type) {}
+
         /**
          * @brief Initialize the buffer with specified capacity
-         * @param size The total capacity of the buffer in bytes
          */
-        void Init(unsigned int size)
+        bool Init()
         {
-            bsize = size;
-            buffer = new unsigned char[size];
+            if (type == BUFFER_TYPE_READ)
+                bsize = configGlobal.READ_BSIZE;
+            else
+                bsize = configGlobal.WRITE_BSIZE;
+
+            return buffer = (unsigned char *)SPBufferPool::GetBuffer(type);
         }
 
         /**
@@ -175,7 +179,7 @@ namespace HSLL
         ~SPBuffer()
         {
             if (buffer)
-                delete[] buffer;
+                SPBufferPool::FreeBufffer(buffer, type);
         }
     };
 }

@@ -11,9 +11,6 @@ namespace HSLL
      */
     class SOCKController
     {
-        typedef void (*FuncClose)(int);             ///< Close callback function type
-        typedef bool (*FuncEvent)(int, bool, bool); ///< Event control function type
-
     public:
         /**
          * @brief Gets the context pointer associated with this controller

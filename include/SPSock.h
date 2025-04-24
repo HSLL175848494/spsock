@@ -3,7 +3,6 @@
 #define HSLL_SPSOCK
 
 #include <signal.h>
-#include <netinet/in.h>
 #include <sys/epoll.h>
 
 #include "noncopyable.h"
@@ -23,7 +22,7 @@ namespace HSLL
          * @param config Reference to the configuration parameters
          * @note Must be called before creating any instance to ensure proper initialization
          */
-        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_WARNING});
+        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_WARNING});
     };
 
     /**

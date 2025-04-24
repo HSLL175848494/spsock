@@ -156,7 +156,9 @@ int main()
 |-------------------------------|-------------|----------------------------------------------------------------------|
 | `READ_BSIZE`                  | `int`       | 读缓冲区大小                                                         |
 | `WRITE_BSIZE`                 | `int`       | 写缓冲区大小                                                         |
-| `MAX_EVENT_BSIZE`             | `int`       | 每个 epoll 循环处理的最大事件数                                      |
+| `WRITE_BSIZE`                 | `int`       | 写缓冲区大小                                                         |
+| `BUFFER_POOL_PEER_ALLOC_NUM`  | `int`       | 缓冲池读写缓冲单次申请数量                                      |
+| `BUFFER_POOL_MIN_BLOCK_NUM`   | `int`       | 缓冲池读写缓冲最小保留数量                                            |
 | `EPOLL_TIMEOUT_MILLISECONDS`  | `int`       | epoll 等待超时时间（毫秒），-1 表示无限等待                          |
 | `EPOLL_DEFAULT_EVENT`         | `int`       | epoll 默认监听的事件类型（如 `EPOLLIN`、`EPOLLOUT` 或 `EPOLLIN\|EPOLLOUT`） |
 | `THREADPOOL_QUEUE_LENGTH`     | `int`       | 线程池任务队列的最大长度                                             |
@@ -168,9 +170,9 @@ int main()
 ## 日志示例
 
 ```
-[INFO] Accepted new connection from: [192.168.1.10]:55213
+[CRUCIAL] Event loop started
+[CRUCIAL] Caught signal 2, exiting event loop
 [CRUCIAL] Event loop exited
-
 ```
 
 ## 注意事项

@@ -1,32 +1,14 @@
 #ifndef HSLL_SPTASK
 #define HSLL_SPTASK
 
-#include "SPTypes.h"
 #include "base/ThreadPool.hpp"
+#include "SPTypes.h"
 #include "noncopyable.h"
 
-using namespace HSLL::CONFIG;
+using namespace HSLL::DEFER;
 
 namespace HSLL
 {
-
-    /**
-     * @brief Function pointer for socket task processing
-     * @details Acts as a mediator for delayed initialization of task handling logic.
-     *          Initialized via SPInitializer::Init() to reference TaskFunc implementation.
-     *          This indirection solves static initialization order issues by allowing
-     *          binding to post-defined functions.
-     */
-    TaskProc taskProc;
-
-    /**
-     * @brief Function pointer for event re-enabling operations
-     * @details Provides deferred initialization for connection recovery logic.
-     *          Set through SPInitializer::Init() to point at REnableFunc implementation.
-     *          The indirection enables proper initialization sequencing where function
-     *          definitions become available before pointer assignment.
-     */
-    REnableProc renableProc;
 
     /**
      * @brief Read or write task for thread pool

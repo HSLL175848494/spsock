@@ -16,8 +16,6 @@ namespace HSLL
     class SOCKController
     {
     public:
-        typedef void (*FuncClose)(int);             ///< Close callback function type
-        typedef bool (*FuncEvent)(int, bool, bool); ///< Event control function type
 
         /**
          * @brief Gets the context pointer associated with this controller
@@ -124,17 +122,17 @@ namespace HSLL
         friend class SPSockTcp;
         friend class SPInitializer;
 
-        int fd;                    ///< Socket file descriptor
-        int events;                ///< Bitmask of currently active epoll events (EPOLLIN/EPOLLOUT)
-        bool peerClosed;           ///< Whether the peer (remote endpoint) has closed the connection
-        void *ctx;                 ///< Context pointer for callback functions
-        unsigned short port;       ///< Port number for the socket connection
-        char ip[INET6_ADDRSTRLEN]; ///< IP address string (IPv4 or IPv6)
-        std::string ipPort;        ///< Combined IP:port string for identification
-        FuncClose fc;              ///< Close callback function
-        FuncEvent fe;              ///< Event control function
-        SPBuffer readBuf;          ///< Buffer for incoming data
-        SPBuffer writeBuf;         ///< Buffer for outgoing data
+        int fd;                               ///< Socket file descriptor
+        int events;                           ///< Bitmask of currently active epoll events (EPOLLIN/EPOLLOUT)
+        bool peerClosed;                      ///< Whether the peer (remote endpoint) has closed the connection
+        void *ctx;                            ///< Context pointer for callback functions
+        unsigned short port;                  ///< Port number for the socket connection
+        char ip[INET6_ADDRSTRLEN];            ///< IP address string (IPv4 or IPv6)
+        std::string ipPort;                   ///< Combined IP:port string for identification
+        FuncClose fc;                         ///< Close callback function
+        FuncEvent fe;                         ///< Event control function
+        SPBuffer readBuf{BUFFER_TYPE_READ};   ///< Buffer for incoming data
+        SPBuffer writeBuf{BUFFER_TYPE_WRITE}; ///< Buffer for outgoing data
 
         /**
          * @brief Initializes the controller with socket parameters
@@ -142,12 +140,9 @@ namespace HSLL
          * @param ctx Context pointer for callbacks
          * @param fc Close callback function
          * @param fe Event control function
-         * @param rbSize Read buffer size
-         * @param wbSize Write buffer size
          * @param events Initial epoll event subscriptions
          */
-        void init(int fd, void *ctx, FuncClose fc, FuncEvent fe,
-                  unsigned int rbSize, unsigned int wbSize, int events);
+        bool init(int fd, void *ctx, FuncClose fc, FuncEvent fe, int events);
 
         /**
          * @brief Reads data from the socket

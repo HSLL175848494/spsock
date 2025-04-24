@@ -35,17 +35,10 @@ namespace HSLL
     typedef void (*TaskProc)(SOCKController *ctx, ReadWriteProc proc);
     ///< Re-listen for the event function pointer
     typedef void (*REnableProc)(SOCKController *controller);
-
-    /**
-     * @brief Enumeration for log levels
-     */
-    enum LOG_LEVEL
-    {
-        LOG_LEVEL_INFO = 0,    // Informational messages
-        LOG_LEVEL_WARNING = 1, // Warning messages
-        LOG_LEVEL_CRUCIAL = 2, // Crucial messages
-        LOG_LEVEL_ERROR = 3,   // Error messages
-    };
+    ///< Close callback function type
+    typedef void (*FuncClose)(int fd);
+    ///< Event control function type
+    typedef bool (*FuncEvent)(int fd, bool read, bool write);
 
     /**
      * @brief Protocol types for socket creation
@@ -72,6 +65,23 @@ namespace HSLL
     {
         FULL_LOAD_POLICY_WAIT,   ///< Block and wait until space becomes available in queue
         FULL_LOAD_POLICY_DISCARD ///< Silently discard new tasks when queue is full
+    };
+
+    /**
+     * @brief Enumeration for log levels
+     */
+    enum LOG_LEVEL
+    {
+        LOG_LEVEL_INFO = 0,    // Informational messages
+        LOG_LEVEL_WARNING = 1, // Warning messages
+        LOG_LEVEL_CRUCIAL = 2, // Crucial messages
+        LOG_LEVEL_ERROR = 3,   // Error messages
+    };
+
+    enum BUFFER_TYPE
+    {
+        BUFFER_TYPE_READ,
+        BUFFER_TYPE_WRITE
     };
 
     /**
@@ -111,34 +121,64 @@ namespace HSLL
      */
     struct SPConfig
     {
-        ///< Read buffer size
+        ///< Read buffer size (must be multiple of 1024, minimum 1KB)
         int READ_BSIZE;
-        ///< Write buffer size
+
+        ///< Write buffer size (must be multiple of 1024, minimum 1KB)
         int WRITE_BSIZE;
-        ///< Maximum events processed per epoll cycle
+
+        ///< Number of blocks requested at a time by the buffer pool (range: 1-1024)
+        int BUFFER_POOL_PEER_ALLOC_NUM;
+
+        ///< Minimum number of blocks in the buffer pool (must ≥ BUFFER_POOL_PEER_ALLOC_NUM)
+        int BUFFER_POOL_MIN_BLOCK_NUM;
+
+        ///< Maximum events processed per epoll cycle (range: 1-65535)
         int MAX_EVENT_BSIZE;
-        ///< Epoll wait timeout in milliseconds (-1 means infinite wait)
+
+        ///< Epoll wait timeout in milliseconds (-1: block indefinitely, 0: non-block, >0: timeout ms)
         int EPOLL_TIMEOUT_MILLISECONDS;
-        ///< By default, epoll listens for events(EPOLLIN EPOLLOUT EPOLLIN|EPOLLOUT)
+
+        ///< Default epoll events (valid combinations: EPOLLIN, EPOLLOUT, or EPOLLIN|EPOLLOUT)
         int EPOLL_DEFAULT_EVENT;
-        ///< Maximum number of tasks in thread pool queue
+
+        ///< Maximum number of tasks in thread pool queue (range: 1-1048576)
         int THREADPOOL_QUEUE_LENGTH;
-        ///< Default number of threads when system core count cannot be determined
+
+        ///< Default threads count when system cores undetectable (range: 1-1024)
         int THREADPOOL_DEFAULT_THREADS_NUM;
-        ///< Number of tasks to submit to thread pool in a single batch
+
+        ///< Batch size for submitting tasks to thread pool (must < THREADPOOL_QUEUE_LENGTH)
         int THREADPOOL_BATCH_SIZE_SUBMIT;
-        ///< Number of tasks for thread pool to process in a single batch
+
+        ///< Batch size for processing tasks in thread pool (range: 1-1024)
         int THREADPOOL_BATCH_SIZE_PROCESS;
-        ///< Minimum log printing level
+
+        ///< Minimum log printing level (valid LOG_LEVEL enum values)
         LOG_LEVEL MIN_LOG_LEVEL;
     };
 
-    namespace CONFIG
+    /**
+     * @brief Lazy initialization of members within the current namespace
+     */
+    namespace DEFER
     {
         /**
          * @brief Global configuration
          */
-       extern SPConfig configGlobal;
+        extern SPConfig configGlobal;
+
+        /**
+         * @brief Function pointer for socket task processing
+         * @details Acts as a mediator for delayed initialization of task handling logic.
+         */
+        extern TaskProc taskProc;
+
+        /**
+         * @brief Function pointer for event re-enabling operations
+         * @details Provides deferred initialization for connection recovery logic.
+         */
+        extern REnableProc renableProc;
     }
 }
 

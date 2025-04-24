@@ -5,7 +5,7 @@
 
 #include "SPTypes.h"
 
-using namespace HSLL::CONFIG;
+using namespace HSLL::DEFER;
 
 /**
  * @brief Macro for logging information with specified level

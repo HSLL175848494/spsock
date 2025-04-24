@@ -5,7 +5,6 @@ namespace HSLL
     // Static member initialization
     unsigned int SOCKADDR_IN<ADDRESS_FAMILY_INET>::UDP_MAX_BSIZE = 65535;
     unsigned int SOCKADDR_IN<ADDRESS_FAMILY_INET6>::UDP_MAX_BSIZE = 65527;
-    SPConfig CONFIG::configGlobal;
 
     // SOCKADDR_IN Implementation
     void SOCKADDR_IN<ADDRESS_FAMILY_INET>::INIT(sockaddr_in &address, unsigned short port)
@@ -24,7 +23,18 @@ namespace HSLL
 
     void SPSock::Config(SPConfig config)
     {
-        SPInitializer::Init(config);
+        assert(config.READ_BSIZE >= 1024 && (config.READ_BSIZE % 1024) == 0);
+        assert(config.WRITE_BSIZE >= 1024 && (config.WRITE_BSIZE % 1024) == 0);
+        assert(config.BUFFER_POOL_PEER_ALLOC_NUM >= 1 && config.BUFFER_POOL_PEER_ALLOC_NUM <= 1024);
+        assert(config.BUFFER_POOL_MIN_BLOCK_NUM >= config.BUFFER_POOL_PEER_ALLOC_NUM);
+        assert(config.MAX_EVENT_BSIZE > 0 && config.MAX_EVENT_BSIZE <= 65535);
+        assert(config.EPOLL_TIMEOUT_MILLISECONDS >= -1);
+        assert((config.EPOLL_DEFAULT_EVENT & ~(EPOLLIN | EPOLLOUT)) == 0);
+        assert(config.THREADPOOL_QUEUE_LENGTH > 0 && config.THREADPOOL_QUEUE_LENGTH <= 1048576);
+        assert(config.THREADPOOL_DEFAULT_THREADS_NUM > 0 && config.THREADPOOL_DEFAULT_THREADS_NUM <= 1024);
+        assert(config.THREADPOOL_BATCH_SIZE_SUBMIT > 0 && config.THREADPOOL_BATCH_SIZE_SUBMIT <= config.THREADPOOL_QUEUE_LENGTH);
+        assert(config.THREADPOOL_BATCH_SIZE_PROCESS > 0 && config.THREADPOOL_BATCH_SIZE_PROCESS <= 1024);
+        configGlobal = config;
     }
 
     // TCP Implementation
@@ -134,9 +144,13 @@ namespace HSLL
         if (proc.cnp)
             ctx = proc.cnp(sockController.ip, sockController.port);
 
-        sockController.init(fd, ctx, FuncClose, FuncEnableEvent,
-                            configGlobal.READ_BSIZE, configGlobal.WRITE_BSIZE, configGlobal.EPOLL_DEFAULT_EVENT);
         HSLL_LOGINFO(LOG_LEVEL_INFO, "Accepted new connection from: ", sockController.ipPort);
+
+        if (!sockController.init(fd, ctx, FuncClose, FuncEnableEvent, configGlobal.EPOLL_DEFAULT_EVENT))
+        {
+            HSLL_LOGINFO(LOG_LEVEL_WARNING, "Insufficient memory space");
+            CloseConnection(fd);
+        }
     }
 
     template <ADDRESS_FAMILY address_family>

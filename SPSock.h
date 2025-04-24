@@ -4,13 +4,12 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
-
 #include <netinet/tcp.h>
 #include <unordered_map>
 #include <unordered_set>
 
 #include "SPLog.hpp"
-#include "SPInitializer.hpp"
+#include "SPInitializer.h"
 
 namespace HSLL
 {
@@ -68,7 +67,7 @@ namespace HSLL
          * @param config Reference to the configuration parameters
          * @note Must be called before creating any instance to ensure proper initialization
          */
-        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_WARNING});
+        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_WARNING});
     };
 
     /**

@@ -23,11 +23,11 @@ endif
 
 # test samples
 ifdef test
-    SAMPLE_SRC := sample/sample_tcp.cpp sample/sample_udp.cpp
+    SAMPLE_SRC := example/example_tcp.cpp example/example_udp.cpp
     SAMPLE_TARGETS := $(addprefix $(BUILD_DIR)/, $(notdir $(SAMPLE_SRC:.cpp=)))
 endif
 
-SOURCES := SPController.cpp SPSock.cpp
+SOURCES := SPController.cpp SPInitializer.cpp SPSock.cpp
 
 .PHONY: all clean
 
@@ -47,9 +47,13 @@ else
 endif
 
 # Build samples
-ifdef TEST
-$(BUILD_DIR)/%: sample/%.cpp $(TARGET)
+ifdef test
+$(BUILD_DIR)/%: example/%.cpp $(TARGET)
+ifeq ($(LIB_TYPE),ar)
+	$(CXX) $(CXXFLAGS) $< -o $@ $(TARGET)
+else
 	$(CXX) $(CXXFLAGS) $< -o $@ -L$(BUILD_DIR) -l$(TARGET_NAME)
+endif
 endif
 
 clean:

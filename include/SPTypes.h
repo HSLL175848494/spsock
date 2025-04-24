@@ -1,6 +1,7 @@
 #ifndef HSLL_SPTYPES
 #define HSLL_SPTYPES
 
+#include <netinet/in.h>
 #include <sys/types.h>
 
 namespace HSLL
@@ -26,15 +27,6 @@ namespace HSLL
     typedef void (*ExitProc)(void *ctx);
     ///< Recieve event callback type
     typedef void (*RecvProc)(void *ctx, const char *data, ssize_t size, const char *ip, unsigned short port);
-
-    /**
-     * @brief Protocol types for socket creation
-     */
-    enum PROTOCOL
-    {
-        PROTOCOL_UDP = SOCK_DGRAM, ///< UDP protocol (connectionless datagram)
-        PROTOCOL_TCP = SOCK_STREAM ///< TCP protocol (connection-oriented stream)
-    };
 
     /**
      * @brief Address family types for socket operations
@@ -71,25 +63,40 @@ namespace HSLL
      */
     struct SPConfig
     {
-        ///< Read buffer size
+        ///< Read buffer size (must be multiple of 1024, minimum 1KB)
         int READ_BSIZE;
-        ///< Write buffer size
+
+        ///< Write buffer size (must be multiple of 1024, minimum 1KB)
         int WRITE_BSIZE;
-        ///< Maximum events processed per epoll cycle
+
+        ///< Number of blocks requested at a time by the buffer pool (range: 1-1024)
+        int BUFFER_POOL_PEER_ALLOC_NUM;
+
+        ///< Minimum number of blocks in the buffer pool (must ≥ BUFFER_POOL_PEER_ALLOC_NUM)
+        int BUFFER_POOL_MIN_BLOCK_NUM;
+
+        ///< Maximum events processed per epoll cycle (range: 1-65535)
         int MAX_EVENT_BSIZE;
-        ///< Epoll wait timeout in milliseconds (-1 means infinite wait)
+
+        ///< Epoll wait timeout in milliseconds (-1: block indefinitely, 0: non-block, >0: timeout ms)
         int EPOLL_TIMEOUT_MILLISECONDS;
-        ///< By default, epoll listens for events(EPOLLIN EPOLLOUT EPOLLIN|EPOLLOUT)
+
+        ///< Default epoll events (valid combinations: EPOLLIN, EPOLLOUT, or EPOLLIN|EPOLLOUT)
         int EPOLL_DEFAULT_EVENT;
-        ///< Maximum number of tasks in thread pool queue
+
+        ///< Maximum number of tasks in thread pool queue (range: 1-1048576)
         int THREADPOOL_QUEUE_LENGTH;
-        ///< Default number of threads when system core count cannot be determined
+
+        ///< Default threads count when system cores undetectable (range: 1-1024)
         int THREADPOOL_DEFAULT_THREADS_NUM;
-        ///< Number of tasks to submit to thread pool in a single batch
+
+        ///< Batch size for submitting tasks to thread pool (must < THREADPOOL_QUEUE_LENGTH)
         int THREADPOOL_BATCH_SIZE_SUBMIT;
-        ///< Number of tasks for thread pool to process in a single batch
+
+        ///< Batch size for processing tasks in thread pool (range: 1-1024)
         int THREADPOOL_BATCH_SIZE_PROCESS;
-        ///< Minimum log printing level
+
+        ///< Minimum log printing level (valid LOG_LEVEL enum values)
         LOG_LEVEL MIN_LOG_LEVEL;
     };
 }

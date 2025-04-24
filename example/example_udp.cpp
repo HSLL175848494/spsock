@@ -24,5 +24,5 @@ int main()
         return -1;
 
     ins->EventLoop();
-    ins->Release(); //    SPSockUdp<ADDRESS_FAMILY_INET>::Release()
+    ins->Release();
 }
