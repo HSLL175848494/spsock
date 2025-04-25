@@ -116,9 +116,9 @@ int main()
 
 ---
 
-### 数据反射控制
+### 数据回传控制
 - **writeBack()**  
-  将读缓冲区的数据直接回写至Socket（如实现Echo服务）。优先发送写缓冲区内容，再尝试直写读缓冲数据。  
+  将读缓冲区的数据直接回写至Socket。优先发送写缓冲区内容，再尝试直写读缓冲数据。  
   - 返回：`false`表示Socket错误需关闭连接。
 
 - **moveToWriteBuffer()**  
@@ -156,9 +156,9 @@ int main()
 |-------------------------------|-------------|----------------------------------------------------------------------|
 | `READ_BSIZE`                  | `int`       | 读缓冲区大小                                                         |
 | `WRITE_BSIZE`                 | `int`       | 写缓冲区大小                                                         |
-| `WRITE_BSIZE`                 | `int`       | 写缓冲区大小                                                         |
-| `BUFFER_POOL_PEER_ALLOC_NUM`  | `int`       | 缓冲池读写缓冲单次申请数量                                      |
-| `BUFFER_POOL_MIN_BLOCK_NUM`   | `int`       | 缓冲池读写缓冲最小保留数量                                            |
+| `BUFFER_POOL_PEER_ALLOC_NUM`  | `int`       | 缓冲内存池单次申请块数量                                      |
+| `BUFFER_POOL_MIN_BLOCK_NUM`   | `int`       | 缓冲内存池块最小数量                                            |
+| `EPOLL_MAX_EVENT_BSIZE`       | `int`       | epoll 单次最大事件接收数量                                            |
 | `EPOLL_TIMEOUT_MILLISECONDS`  | `int`       | epoll 等待超时时间（毫秒），-1 表示无限等待                          |
 | `EPOLL_DEFAULT_EVENT`         | `int`       | epoll 默认监听的事件类型（如 `EPOLLIN`、`EPOLLOUT` 或 `EPOLLIN\|EPOLLOUT`） |
 | `THREADPOOL_QUEUE_LENGTH`     | `int`       | 线程池任务队列的最大长度                                             |
