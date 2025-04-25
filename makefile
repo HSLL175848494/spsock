@@ -1,5 +1,5 @@
 CXX := g++
-CXXFLAGS := -Wall -I. -fPIC -fvisibility=default
+CXXFLAGS := -I. -fPIC -std=c++17
 TARGET_NAME := SPSock
 BUILD_DIR := build
 
