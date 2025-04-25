@@ -1,5 +1,5 @@
 CXX := g++
-CXXFLAGS := -I. -fPIC -std=c++17
+CXXFLAGS := -fPIC -std=c++17
 TARGET_NAME := SPSock
 BUILD_DIR := build
 

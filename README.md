@@ -9,9 +9,10 @@
 - 🔌 可配置的Keep-Alive/Linger机制
 - 📝 多粒度日志控制系统
 
-## 编译选项
+## 构建
 
-使用附带的Makefile支持以下编译参数：
+### makefile构建
+
 
 | 参数       | 说明                      | 示例                 |
 |------------|---------------------------|----------------------|
@@ -19,21 +20,22 @@
 | static=1   | 生成静态库                | `make static=1`      |
 | test=1     | 编译测试样例              | `make test=1`        |
 
-## 库引入
+### cmake构建
 
-包含include目录下的SPSock.h并链接libSPsock.so/libSPsock.a
-
-### 示例
-
-main.cpp:
-```cpp
-#include"SPSock.h"
 ```
-编译链接:
-```cpp
-g++ -o2 main.cpp -o test -lSPsock
+mkdir -p build && cd build
+cmake ..
+make
 ```
-##快速开始
+
+| 参数       | 说明                      | 示例                 |
+|------------|---------------------------|----------------------|
+| -DCMAKE_BUILD_TYPE=Debug   | 启用调试模式       | `cmake .. -DCMAKE_BUILD_TYPE=Debug`       |
+| -DBUILD_STATIC=ON   | 生成静态库                | `cmake .. -DBUILD_STATIC=ON`      |
+| -DBUILD_TEST=ON     | 编译测试样例              | `cmake .. -DBUILD_TEST=ON`        |
+
+
+## 快速开始
 
 ### TCP服务器
 
