@@ -27,7 +27,7 @@ namespace HSLL
         assert(config.WRITE_BSIZE >= 1024 && (config.WRITE_BSIZE % 1024) == 0);
         assert(config.BUFFER_POOL_PEER_ALLOC_NUM >= 1 && config.BUFFER_POOL_PEER_ALLOC_NUM <= 1024);
         assert(config.BUFFER_POOL_MIN_BLOCK_NUM >= config.BUFFER_POOL_PEER_ALLOC_NUM);
-        assert(config.MAX_EVENT_BSIZE > 0 && config.MAX_EVENT_BSIZE <= 65535);
+        assert(config.EPOLL_MAX_EVENT_BSIZE > 0 && config.EPOLL_MAX_EVENT_BSIZE <= 65535);
         assert(config.EPOLL_TIMEOUT_MILLISECONDS >= -1);
         assert((config.EPOLL_DEFAULT_EVENT & ~(EPOLLIN | EPOLLOUT)) == 0);
         assert(config.THREADPOOL_QUEUE_LENGTH > 0 && config.THREADPOOL_QUEUE_LENGTH <= 1048576);
@@ -327,7 +327,7 @@ namespace HSLL
             return false;
         }
 
-        epoll_event *events = new epoll_event[configGlobal.MAX_EVENT_BSIZE];
+        epoll_event *events = new epoll_event[configGlobal.EPOLL_MAX_EVENT_BSIZE];
         if (!events)
         {
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to allocate memory for epoll events");
@@ -376,7 +376,7 @@ namespace HSLL
 
         while (exitFlag.load(std::memory_order_acquire))
         {
-            int nfds = epoll_wait(epollfd, events, configGlobal.MAX_EVENT_BSIZE, configGlobal.EPOLL_TIMEOUT_MILLISECONDS);
+            int nfds = epoll_wait(epollfd, events, configGlobal.EPOLL_MAX_EVENT_BSIZE, configGlobal.EPOLL_TIMEOUT_MILLISECONDS);
             if (nfds == -1)
             {
                 if (errno == EINTR)

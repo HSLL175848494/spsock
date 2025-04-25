@@ -134,7 +134,7 @@ namespace HSLL
         int BUFFER_POOL_MIN_BLOCK_NUM;
 
         ///< Maximum events processed per epoll cycle (range: 1-65535)
-        int MAX_EVENT_BSIZE;
+        int EPOLL_MAX_EVENT_BSIZE;
 
         ///< Epoll wait timeout in milliseconds (-1: block indefinitely, 0: non-block, >0: timeout ms)
         int EPOLL_TIMEOUT_MILLISECONDS;
