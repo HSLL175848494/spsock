@@ -43,6 +43,7 @@ make
 int main()
 {
     SPSock::Config();//填充默认配置
+
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();//获取实例
 
     if (ins->EnableKeepAlive(true, 120, 2, 10) == false)//设置KeepAlive
@@ -57,6 +58,7 @@ int main()
         return -1;
 
     ins->EventLoop();//事件循环
+
     ins->Release(); //释放实例
     return 0;
 }
@@ -67,6 +69,7 @@ int main()
 int main()
 {
     SPSock::Config();//填充默认配置
+
     auto ins = SPSockUdp<ADDRESS_FAMILY_INET>::GetInstance();//获取实例
 
     if (ins->Bind(4567)==false)//绑定端口
@@ -79,6 +82,7 @@ int main()
         return -1;
 
     ins->EventLoop();//事件循环
+
     ins->Release(); //释放实例
 }
 ```
