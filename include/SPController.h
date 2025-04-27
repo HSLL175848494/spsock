@@ -2,6 +2,7 @@
 #define HSLL_SPCONTROLLER
 
 #include "SPTypes.h"
+#include "SPBuffer.h"
 
 namespace HSLL
 {
@@ -51,8 +52,7 @@ namespace HSLL
 
         /**
          * @brief Commits buffered writes to the socket
-         * @return Number of bytes remaining in buffer (0 if all sent),
-         *         -1 on error
+         * @return Number of bytes remaining in buffer (0 if all sent), -1 on error
          * @note On error, call Close() or EnableEvent()
          */
         ssize_t commitWrite();
@@ -70,12 +70,34 @@ namespace HSLL
         unsigned int getWriteBufferSize();
 
         /**
+         * @brief Get pointer to read buffer instance
+         * @return Pointer to read buffer management object
+         */
+        SPBuffer *getReadBuffer();
+
+        /**
+         * @brief Get pointer to write buffer instance
+         * @return Pointer to write buffer management object
+         */
+        SPBuffer *getWriteBuffer();
+
+        /**
+         * @brief Get read buffer capacity from config
+         * @return Read buffer capacity in bytes defined by global config
+         */
+        unsigned int getReadBufferCapacity();
+
+        /**
+         * @brief Get write buffer capacity from config
+         * @return Write buffer capacity in bytes defined by global config
+         */
+        unsigned int getWriteBufferCapacity();
+
+        /**
          * @brief Directly write back data from read buffer to socket
-         *
          * This function first sends any pending data in the write buffer. If the write buffer
          * is completely emptied, it then attempts to send data directly from the read buffer
          * to the socket. Unsent data remains in the read buffer and is not moved to write buffer.
-         *
          * @return true if operation succeeded (including partial writes),
          * @return false if socket error occurred (connection should be closed)
          */
@@ -83,14 +105,12 @@ namespace HSLL
 
         /**
          * @brief Move data from read buffer to write buffer
-         *
          * Transfers as much data as possible from the read buffer to the write buffer
          * without involving actual I/O operations. This is useful for implementing
          * echo services or data reflection patterns.
-         *
-         * @return size_t Number of bytes actually moved between buffers
+         * @return size Number of bytes actually moved between buffers
          */
-        size_t moveToWriteBuffer();
+        unsigned int moveToWriteBuffer();
 
         /**
          * @brief Re-enables event monitoring for the socket

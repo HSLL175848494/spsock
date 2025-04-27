@@ -26,7 +26,6 @@ namespace HSLL
          * @brief Attempt to allocate a block of buffers
          * @param num Number of buffer pairs (read+write) to allocate
          * @return true if allocation succeeded, false otherwise
-         *
          * Allocates a memory block containing 'num' read/write buffer pairs.
          * Each buffer is preceded by metadata (block reference + next pointer).
          * Organized as:
@@ -121,7 +120,6 @@ namespace HSLL
         /**
          * @brief Internal method to release read buffer back to pool
          * @param buf Buffer to release (must be pointer returned by GetReadBufferInner)
-         *
          * Either adds buffer back to free list or decrements block reference count
          */
         void FreeReadBuffferInner(void *buf)
@@ -147,7 +145,6 @@ namespace HSLL
         /**
          * @brief Internal method to release write buffer back to pool
          * @param buf Buffer to release (must be pointer returned by GetWriteBufferInner)
-         *
          * Either adds buffer back to free list or decrements block reference count
          */
         void FreeWriteBufferInner(void *buf)
@@ -217,7 +214,7 @@ namespace HSLL
          * @param buf Buffer to release
          * @param type Buffer type (read/write)
          */
-        static void FreeBufffer(void *buf, BUFFER_TYPE type)
+        static void FreeBuffer(void *buf, BUFFER_TYPE type)
         {
             (type == BUFFER_TYPE_READ) ? pool.FreeReadBuffferInner(buf) : pool.FreeWriteBufferInner(buf);
         }

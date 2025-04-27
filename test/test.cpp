@@ -29,8 +29,6 @@ void echo_read_write_proc(SOCKController *controller)
 
 int main()
 {
-    // g++ -o3 ../SPController.cpp ../SPInitializer.cpp ../SPSock.cpp test.cpp -o test
-
     SPSockTcp<ADDRESS_FAMILY_INET>::Config();
 
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();

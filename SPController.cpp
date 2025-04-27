@@ -143,6 +143,26 @@ namespace HSLL
         return writeBuf.bytesRead();
     }
 
+    SPBuffer *SOCKController::getReadBuffer()
+    {
+        return &readBuf;
+    }
+
+    SPBuffer *SOCKController::getWriteBuffer()
+    {
+        return &writeBuf;
+    }
+
+    unsigned int SOCKController::getReadBufferCapacity()
+    {
+        return configGlobal.READ_BSIZE;
+    }
+
+    unsigned int SOCKController::getWriteBufferCapacity()
+    {
+        return configGlobal.WRITE_BSIZE;
+    }
+
     bool SOCKController::writeBack()
     {
         ssize_t writeResult = commitWrite();
@@ -176,9 +196,9 @@ namespace HSLL
         return true;
     }
 
-    size_t SOCKController::moveToWriteBuffer()
+    unsigned int SOCKController::moveToWriteBuffer()
     {
-        size_t moved = 0;
+        unsigned int moved = 0;
         unsigned int maxMove = std::min(readBuf.bytesRead(), writeBuf.bytesWrite());
 
         while (moved < maxMove)
