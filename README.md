@@ -148,7 +148,7 @@ int main()
 ### 关键特性
 - **线程安全**：所有I/O操作内置同步机制，支持多线程调用。
 - **双缓冲设计**：读/写分离缓冲减少锁竞争，`writeTemp`+`commitWrite`支持批量提交优化。
-- **高效反射**：`writeBack`和`moveToWriteBuffer`避免内存拷贝，提升转发性能。
+- **高效h回传**：`writeBack`和`moveToWriteBuffer`避免内存拷贝，提升转发性能。
 
 ## 全局配置
 
