@@ -10,8 +10,11 @@
 
 namespace HSLL
 {
-
-/// Marks functions that should only be called once
+/**
+ * @brief Macro marking functions that should only be called once
+ * @details Functions decorated with this should maintain their own state
+ *          to prevent multiple executions.
+ */
 #define SPSOCK_ONE_TIME_CALL
 
     // Forward declaration of SOCKController class
@@ -35,9 +38,9 @@ namespace HSLL
     typedef void (*TaskProc)(SOCKController *ctx, ReadWriteProc proc);
     ///< Re-listen for the event function pointer
     typedef void (*REnableProc)(SOCKController *controller);
-    ///< Close callback function type
+    ///< File descriptor close callback function type
     typedef void (*FuncClose)(int fd);
-    ///< Event control function type
+    ///< Socket event control function type
     typedef bool (*FuncEvent)(int fd, bool read, bool write);
 
     /**
@@ -68,20 +71,35 @@ namespace HSLL
     };
 
     /**
-     * @brief Enumeration for log levels
+     * @brief Enumeration for log severity levels
      */
     enum LOG_LEVEL
     {
-        LOG_LEVEL_INFO = 0,    // Informational messages
-        LOG_LEVEL_WARNING = 1, // Warning messages
-        LOG_LEVEL_CRUCIAL = 2, // Crucial messages
-        LOG_LEVEL_ERROR = 3,   // Error messages
+        LOG_LEVEL_INFO = 0,    ///< Informational messages (lowest severity)
+        LOG_LEVEL_WARNING = 1, ///< Warning messages indicating potential issues
+        LOG_LEVEL_CRUCIAL = 2, ///< Critical messages requiring immediate attention
+        LOG_LEVEL_ERROR = 3,   ///< Error messages indicating failure conditions
     };
 
+    /**
+     * @brief Enumeration for buffer operation types
+     */
     enum BUFFER_TYPE
     {
-        BUFFER_TYPE_READ,
-        BUFFER_TYPE_WRITE
+        BUFFER_TYPE_READ, ///< Buffer used for incoming data operations
+        BUFFER_TYPE_WRITE ///< Buffer used for outgoing data operations
+    };
+
+    /**
+     * @brief Structure defining watermark thresholds and timeouts
+     * @details Used for flow control and timeout handling in network I/O operations
+     */
+    struct SPWaterMark
+    {
+        unsigned int readMark;          ///< High watermark for read buffer threshold
+        unsigned int writeMark;         ///< High watermark for write buffer threshold
+        unsigned int readTimeoutMills;  ///< Read operation timeout in milliseconds
+        unsigned int writeTimeoutMills; ///< Write operation timeout in milliseconds
     };
 
     /**
@@ -91,7 +109,7 @@ namespace HSLL
     {
         ReadProc rdp;    ///< Callback for read events (data available to read)
         WriteProc wtp;   ///< Callback for write events (ready to send data)
-        ConnectProc cnp; ///< Callback for new connections (TCP only)
+        ConnectProc cnp; ///< Callback for new connections
         CloseProc csp;   ///< Callback for connection closure events
     };
 
@@ -108,7 +126,7 @@ namespace HSLL
 
     /**
      * @brief Thread-safe connection close list
-     * Used to safely manage connection closures across multiple threads
+     * @details Used to safely manage connection closures across multiple threads
      */
     struct CloseList
     {
@@ -117,7 +135,8 @@ namespace HSLL
     };
 
     /**
-     * @brief SPSockTcp configuration
+     * @brief Main socket configuration structure
+     * @details Contains all tunable parameters for socket performance and behavior
      */
     struct SPConfig
     {
@@ -159,14 +178,22 @@ namespace HSLL
     };
 
     /**
-     * @brief Lazy initialization of members within the current namespace
+     * @brief Namespace for deferred or lazy initialization components
+     * @details Contains objects requiring delayed initialization or global state
      */
     namespace DEFER
     {
         /**
-         * @brief Global configuration
+         * @brief Global socket configuration instance
+         * @details Contains runtime configuration parameters for socket operations
          */
         extern SPConfig configGlobal;
+
+        /**
+         * @brief Global watermark configuration instance
+         * @details Contains thresholds for flow control and timeout settings
+         */
+        extern SPWaterMark markGlobal;
 
         /**
          * @brief Function pointer for socket task processing

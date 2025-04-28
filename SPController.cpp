@@ -4,21 +4,22 @@
 namespace HSLL
 {
     // SOCKController Implementation
-    bool SOCKController::init(int fd, void *ctx, FuncClose fc, FuncEvent fe, int events)
+    bool SOCKController::init(int fd, void *ctx, FuncClose funcClose, FuncEvent funcEvent, int events)
     {
-        this->fd = fd;
-        this->ctx = ctx;
-        this->fc = fc;
-        this->fe = fe;
-
         if (!readBuf.Init())
             return false;
 
         if (!writeBuf.Init())
             return false;
 
+        this->fd = fd;
+        this->ctx = ctx;
+        this->funcClose = funcClose;
+        this->funcEvent = funcEvent;
         this->events = events;
         peerClosed = false;
+        tvRead = getTimestamp();
+        tvWrite = tvRead;
         ipPort = "[" + std::string(ip) + "]:" + std::to_string(port);
         return true;
     }
@@ -89,6 +90,11 @@ namespace HSLL
     size_t SOCKController::read(void *buf, size_t len)
     {
         return readBuf.read(buf, len);
+    }
+
+    size_t SOCKController::peek(void *buf, size_t len)
+    {
+        return readBuf.peek(buf, len);
     }
 
     ssize_t SOCKController::write(const void *buf, size_t len)
@@ -220,7 +226,7 @@ namespace HSLL
 
     bool SOCKController::enableEvents(bool read, bool write)
     {
-        bool ret = fe(fd, read, write);
+        bool ret = funcEvent(fd, read, write);
         events = 0;
         if (ret)
         {
@@ -234,14 +240,26 @@ namespace HSLL
 
     bool SOCKController::renableEvents()
     {
-        bool ret = fe(fd, events & EPOLLIN, events & EPOLLOUT);
+        bool ret = funcEvent(fd, events & EPOLLIN, events & EPOLLOUT);
         if (!ret)
             events = 0;
         return ret;
     }
 
+    long long SOCKController::getTimestamp()
+    {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        return (long long)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+    }
+
+    void SOCKController::setEvent(int event)
+    {
+        this->event = event;
+    }
+
     void SOCKController::close()
     {
-        fc(fd);
+        funcClose(fd);
     }
 }

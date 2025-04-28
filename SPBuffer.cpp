@@ -89,6 +89,21 @@ namespace HSLL
         return bytesToRead;
     }
 
+    unsigned int SPBuffer::peek(void *buf, unsigned int len)
+    {
+        if (len == 0 || size == 0)
+            return 0;
+
+        const unsigned int bytesToRead = (len > size) ? size : len;
+        const unsigned int firstChunk = (back + bytesToRead > bsize) ? (bsize - back) : bytesToRead;
+        memcpy(buf, buffer + back, firstChunk);
+
+        if (firstChunk < bytesToRead)
+            memcpy((unsigned char *)buf + firstChunk, buffer, bytesToRead - firstChunk);
+
+        return bytesToRead;
+    }
+
     unsigned int SPBuffer::write(const void *buf, unsigned int len)
     {
         if (len == 0 || bytesWrite() == 0)

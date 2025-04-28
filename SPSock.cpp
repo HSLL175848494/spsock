@@ -236,7 +236,7 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    SPSockTcp<address_family>::SPSockTcp() : epollfd(-1), listenfd(-1), idlefd(-1), status(0), lin{0, 0}, alive{1, 120, 3, 10} {};
+    SPSockTcp<address_family>::SPSockTcp() : epollfd(-1), listenfd(-1), idlefd(-1), status(0), lin{0, 0}, alive{0, 0, 0, 0} {};
 
     template <ADDRESS_FAMILY address_family>
     SPSockTcp<address_family> *SPSockTcp<address_family>::GetInstance()
@@ -425,6 +425,7 @@ namespace HSLL
 
                     if (proc.rdp)
                     {
+                        it->second.setEvent(EPOLLIN);
                         utilTask.append(&it->second, proc.rdp);
                     }
                     else if (proc.wtp)
@@ -442,6 +443,7 @@ namespace HSLL
                     auto it = connections.find(fd);
                     if (proc.wtp)
                     {
+                        it->second.setEvent(EPOLLOUT);
                         utilTask.append(&it->second, proc.wtp);
                     }
                     else if (proc.rdp)
@@ -518,6 +520,14 @@ namespace HSLL
         status |= 0x2;
         HSLL_LOGINFO(LOG_LEVEL_INFO, "Callbacks configured successfully");
         return true;
+    }
+    
+    template <ADDRESS_FAMILY address_family>
+    void SPSockTcp<address_family>::SetWaterMark(unsigned int readMark, unsigned int writeMark,
+                                                 unsigned int readTimeoutMills, unsigned int writeTimeoutMills)
+    {
+        markGlobal = {readMark, writeMark, readTimeoutMills, writeTimeoutMills};
+        HSLL_LOGINFO(LOG_LEVEL_INFO, "Low water mark configured successfully");
     }
 
     template <ADDRESS_FAMILY address_family>

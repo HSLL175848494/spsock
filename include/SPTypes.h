@@ -47,19 +47,19 @@ namespace HSLL
     };
 
     /**
-     * @brief Enumeration for log levels
+     * @brief Enumeration for log severity levels
      */
     enum LOG_LEVEL
     {
-        LOG_LEVEL_INFO = 0,    // Informational messages
-        LOG_LEVEL_WARNING = 1, // Warning messages
-        LOG_LEVEL_CRUCIAL = 2, // Crucial messages
-        LOG_LEVEL_ERROR = 3,   // Error messages
-        LOG_LEVEL_NONE = 4,    // NONE
+        LOG_LEVEL_INFO = 0,    ///< Informational messages (lowest severity)
+        LOG_LEVEL_WARNING = 1, ///< Warning messages indicating potential issues
+        LOG_LEVEL_CRUCIAL = 2, ///< Critical messages requiring immediate attention
+        LOG_LEVEL_ERROR = 3,   ///< Error messages indicating failure conditions
     };
 
     /**
-     * @brief SPSockTcp configuration
+     * @brief Main socket configuration structure
+     * @details Contains all tunable parameters for socket performance and behavior
      */
     struct SPConfig
     {

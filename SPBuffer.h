@@ -17,7 +17,7 @@ namespace HSLL
         unsigned int size = 0;           ///< Current number of bytes stored in buffer
         unsigned int bsize = 0;          ///< Total capacity of the buffer
         unsigned char *buffer = nullptr; ///< Underlying data storage
-        BUFFER_TYPE type;
+        BUFFER_TYPE type;                ///< Buffer type
 
     public:
         SPBuffer(BUFFER_TYPE type);
@@ -86,6 +86,16 @@ namespace HSLL
          * @return Actual number of bytes read
          */
         unsigned int read(void *buf, unsigned int len);
+
+        /**
+         * @brief Peek data from buffer without advancing read pointer
+         * @param buf Destination buffer for peeked data
+         * @param len Maximum number of bytes to peek
+         * @return Actual number of bytes peeked
+         * @warning Same constraints as read() - check bytesRead() first
+         */
+        unsigned int peek(void *buf, unsigned int len);
+
         /**
          * @brief Write data to buffer
          * @param buf Source buffer containing data to write

@@ -167,6 +167,16 @@ namespace HSLL
         bool SetCallback(RecvProc rcp, void *ctx = nullptr);
 
         /**
+         * @brief Configures watermarks and timeout thresholds for read/write event triggering.
+         * @param readMark Minimum number of bytes in the receive buffer to trigger a read event (0 = immediate).
+         * @param writeMark Minimum free space in the send buffer to trigger a write event (0 = immediate).
+         * @param readTimeoutMills Maximum time (ms) to wait for new data before triggering a read event regardless of `readMark`.
+         * @param writeTimeoutMills Maximum time (ms) to wait for send availability before triggering a write event regardless of `writeMark`.
+         */
+        void SetWaterMark(unsigned int readMark = 0, unsigned int writeMark = 0,
+                          unsigned int readTimeoutMills = UINT32_MAX, unsigned int writeTimeoutMills = UINT32_MAX);
+
+        /**
          * @brief Signals event loop to exit
          * @note Should be called after starting event loop
          */

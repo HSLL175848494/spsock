@@ -27,7 +27,7 @@ void echo_read_write_proc(SOCKController *controller)
     }
 }
 
-int main()
+int main()// g++ -o3  ../*.cpp test.cpp -o test
 {
     SPSockTcp<ADDRESS_FAMILY_INET>::Config();
 
@@ -42,6 +42,7 @@ int main()
     if (ins->Listen(4567) == false)
         return -1;
 
+    ins->SetWaterMark(10,10,5000,10);
     ins->EventLoop();
     ins->Release();
     return 0;

@@ -1,8 +1,9 @@
 #ifndef HSLL_SPCONTROLLER
 #define HSLL_SPCONTROLLER
 
-#include <arpa/inet.h>
 #include <string>
+#include <sys/time.h>
+#include <arpa/inet.h>
 
 #include "SPTypes.h"
 #include "SPBuffer.h"
@@ -35,6 +36,15 @@ namespace HSLL
          * @return Number of bytes actually read
          */
         size_t read(void *buf, size_t len);
+
+        /**
+         * @brief Peeks data from the read buffer without advancing the read pointer
+         * @param buf Destination buffer to copy data into
+         * @param len Maximum number of bytes to peek
+         * @return Number of bytes actually copied (0 if buffer is empty)
+         * @note This is a non-destructive read operation
+         */
+        size_t peek(void *buf, size_t len);
 
         /**
          * @brief Writes data directly to the socket
@@ -141,15 +151,20 @@ namespace HSLL
         friend class SPSockTcp;
         friend class SPInitializer;
 
-        int fd;                               ///< Socket file descriptor
-        int events;                           ///< Bitmask of currently active epoll events (EPOLLIN/EPOLLOUT)
-        bool peerClosed;                      ///< Whether the peer (remote endpoint) has closed the connection
-        void *ctx;                            ///< Context pointer for callback functions
-        unsigned short port;                  ///< Port number for the socket connection
-        char ip[INET6_ADDRSTRLEN];            ///< IP address string (IPv4 or IPv6)
-        std::string ipPort;                   ///< Combined IP:port string for identification
-        FuncClose fc;                         ///< Close callback function
-        FuncEvent fe;                         ///< Event control function
+        int fd;          ///< Socket file descriptor
+        int event;       ///< Currently triggered epoll event
+        int events;      ///< Bitmask of currently active epoll events (EPOLLIN/EPOLLOUT)
+        bool peerClosed; ///< Whether the peer (remote endpoint) has closed the connection
+
+        void *ctx;                 ///< Context pointer for callback functions
+        char ip[INET6_ADDRSTRLEN]; ///< IP address string (IPv4 or IPv6)
+        unsigned short port;       ///< Port number for the socket connection
+        std::string ipPort;        ///< Combined IP:port string for identification
+
+        long long tvRead;                     ///< Timeval structure to store the timestamp of the last read callback invocation
+        long long tvWrite;                    ///< Timeval structure to store the timestamp of the last write callback invocation
+        FuncClose funcClose;                  ///< Close callback function
+        FuncEvent funcEvent;                  ///< Event control function
         SPBuffer readBuf{BUFFER_TYPE_READ};   ///< Buffer for incoming data
         SPBuffer writeBuf{BUFFER_TYPE_WRITE}; ///< Buffer for outgoing data
 
@@ -157,11 +172,11 @@ namespace HSLL
          * @brief Initializes the controller with socket parameters
          * @param fd Socket file descriptor
          * @param ctx Context pointer for callbacks
-         * @param fc Close callback function
-         * @param fe Event control function
+         * @param funcClose Close callback function
+         * @param funcEvent Event control function
          * @param events Initial epoll event subscriptions
          */
-        bool init(int fd, void *ctx, FuncClose fc, FuncEvent fe, int events);
+        bool init(int fd, void *ctx, FuncClose funcClose, FuncEvent funcEvent, int events);
 
         /**
          * @brief Reads data from the socket
@@ -187,6 +202,19 @@ namespace HSLL
          * @note On error, call Close() or EnableEvent()
          */
         bool readSocket();
+
+        /**
+         * @brief Gets the current timestamp in milliseconds since epoch
+         * @return Current timestamp as milliseconds since Unix epoch
+         */
+        long long getTimestamp();
+
+        /**
+         * @brief Set the currently triggered epoll event
+         * @param buf epoll event
+         */
+        void setEvent(int event);
+
     };
 }
 

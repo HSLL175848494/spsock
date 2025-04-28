@@ -78,10 +78,9 @@ namespace HSLL
     class SPSockTcp : public SPSock
     {
     private:
-        linger lin;        ///< Linger configuration
-        SPSockProc proc;   ///< User connections callbacks
-        SPSockAlive alive; ///< Keep-alive settings
-
+        linger lin;                                          ///< Linger configuration
+        SPSockProc proc;                                     ///< User connections callbacks
+        SPSockAlive alive;                                   ///< Keep-alive settings
         CloseList list;                                      ///< Connection close list
         std::unordered_map<int, SOCKController> connections; ///< Active connections
 
@@ -200,6 +199,16 @@ namespace HSLL
          * @return true on success, false on failure
          */
         bool SetCallback(ConnectProc cnp = nullptr, CloseProc csp = nullptr, ReadProc rdp = nullptr, WriteProc wtp = nullptr);
+
+        /**
+         * @brief Configures watermarks and timeout thresholds for read/write event triggering.
+         * @param readMark Minimum number of bytes in the receive buffer to trigger a read event (0 = immediate).
+         * @param writeMark Minimum free space in the send buffer to trigger a write event (0 = immediate).
+         * @param readTimeoutMills Maximum time (ms) to wait for new data before triggering a read event regardless of `readMark`.
+         * @param writeTimeoutMills Maximum time (ms) to wait for send availability before triggering a write event regardless of `writeMark`.
+         */
+        void SetWaterMark(unsigned int readMark = 0, unsigned int writeMark = 0,
+                          unsigned int readTimeoutMills = UINT32_MAX, unsigned int writeTimeoutMills = UINT32_MAX);
 
         /**
          * @brief Configures exit signal handling

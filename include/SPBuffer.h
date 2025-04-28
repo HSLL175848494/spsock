@@ -72,6 +72,15 @@ namespace HSLL
         unsigned int read(void *buf, unsigned int len);
 
         /**
+         * @brief Peek data from buffer without advancing read pointer
+         * @param buf Destination buffer for peeked data
+         * @param len Maximum number of bytes to peek
+         * @return Actual number of bytes peeked
+         * @warning Same constraints as read() - check bytesRead() first
+         */
+        unsigned int peek(void *buf, unsigned int len);
+
+        /**
          * @brief Write data to buffer
          * @param buf Source buffer containing data to write
          * @param len Number of bytes to write

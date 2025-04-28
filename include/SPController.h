@@ -34,6 +34,15 @@ namespace HSLL
         size_t read(void *buf, size_t len);
 
         /**
+         * @brief Peeks data from the read buffer without advancing the read pointer
+         * @param buf Destination buffer to copy data into
+         * @param len Maximum number of bytes to peek
+         * @return Number of bytes actually copied (0 if buffer is empty)
+         * @note This is a non-destructive read operation
+         */
+        size_t peek(void *buf, size_t len);
+
+        /**
          * @brief Writes data directly to the socket
          * @param buf Data buffer to send
          * @param len Number of bytes to send
