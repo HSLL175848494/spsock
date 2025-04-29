@@ -4,12 +4,12 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
+#include <assert.h>
 #include <netinet/tcp.h>
 #include <unordered_map>
-#include <unordered_set>
 
 #include "SPLog.hpp"
-#include "SPInitializer.h"
+#include "SPDeferred.h"
 
 namespace HSLL
 {
@@ -57,31 +57,17 @@ namespace HSLL
     };
 
     /**
-     * @brief Socket base class
-     */
-    class SPSock : noncopyable
-    {
-    public:
-        /**
-         * @brief Initialize global configuration parameters
-         * @param config Reference to the configuration parameters
-         * @note Must be called before creating any instance to ensure proper initialization
-         */
-        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_WARNING});
-    };
-
-    /**
      * @brief Main TCP socket management class
      * @tparam address_family IP version (IPv4/IPv6)
      */
     template <ADDRESS_FAMILY address_family>
-    class SPSockTcp : public SPSock
+    class SPSockTcp : noncopyable
     {
     private:
         linger lin;                                          ///< Linger configuration
         SPSockProc proc;                                     ///< User connections callbacks
         SPSockAlive alive;                                   ///< Keep-alive settings
-        CloseList list;                                      ///< Connection close list
+        CloseList cList;                                     ///< Connection close list
         std::unordered_map<int, SOCKController> connections; ///< Active connections
 
         int status;   ///< Internal status flags
@@ -89,8 +75,8 @@ namespace HSLL
         int epollfd;  ///< Epoll file descriptor
         int listenfd; ///< Listening socket descriptor
 
-        static void *exitCtx;                       ///< Event loop exit ctx
-        static ExitProc exitProc;                   ///< Event loop exit proc
+        static void *exitCtx;                       ///< Event loop exit context
+        static ExitProc exitProc;                   ///< Event loop exit procedure
         static std::atomic<bool> exitFlag;          ///< Event loop control flag
         static SPSockTcp<address_family> *instance; ///< Singleton instance
 
@@ -107,39 +93,91 @@ namespace HSLL
         void SetKeepAlive(int fd);
 
         /**
-         * @brief Handles new incoming connections
+         * @brief Actively initiates closure of a connection by adding it to the close list
+         * @param controller Pointer to the connection controller to be closed
+         * @note This is a static member function that operates on the singleton instance
          */
-        void DealConnect();
+        static void ActiveClose(SOCKController *controller);
+
+        /**
+         * @brief Enables or modifies epoll event monitoring for a file descriptor
+         * @param fd File descriptor to modify
+         * @param read Whether to enable read events (EPOLLIN)
+         * @param write Whether to enable write events (EPOLLOUT)
+         * @return true if event modification succeeded, false otherwise
+         */
+        static bool EnableEvent(int fd, bool read, bool write);
 
         /**
          * @brief Signal handler for graceful shutdown
+         * @param sg Signal number received
          */
-        static void DealExit(int sg);
+        static void HandleExit(int sg);
 
         /**
-         * @brief Close callback implementation
-         * @param fd File descriptor to close
+         * @brief Prepares the epoll instance and thread pool for event processing
+         * @param events Pre-allocated epoll event buffer
+         * @param pool Pointer to the thread pool instance
+         * @return true if preparation succeeded, false otherwise
+         * @note Initializes epoll instance, configures listening socket,
+         *       and sets up worker threads
          */
-        static void FuncClose(int fd);
+        bool Prepare(epoll_event *events, ThreadPool<SockTask> *pool);
 
         /**
-         * @brief Event control callback implementation
-         * @param fd File descriptor to modify
-         * @param read Enable read events
-         * @param write Enable write events
-         * @return true on success, false on failure
+         * @brief Handles new incoming connections
          */
-        static bool FuncEnableEvent(int fd, bool read, bool write);
+        void HandleConnect();
+
+        /**
+         * @brief Processes pending connection closures from the close list
+         * @note Safely removes connections marked for closure and releases resources
+         */
+        void HandleCloseList();
+
+        /**
+         * @brief Dispatches epoll events to appropriate handlers
+         * @param events Array of epoll events to process
+         * @param nfds Number of ready file descriptors
+         * @param utilTask Utility task manager for operation dispatching
+         */
+        void HandleEvents(epoll_event *events, int nfds, UtilTask *utilTask);
+
+        /**
+         * @brief Processes read events for a connection
+         * @param controller Connection controller triggering the read event
+         * @param utilTask Utility task manager for dispatching read operations
+         * @note May trigger user-defined read callback or initiate connection closure
+         */
+        void HandleRead(SOCKController *controller, UtilTask *utilTask);
+
+        /**
+         * @brief Processes write events for a connection
+         * @param controller Connection controller triggering the write event
+         * @param utilTask Utility task manager for dispatching write operations
+         * @note May trigger user-defined write callback or initiate connection closure
+         */
+        void HandleWrite(SOCKController *controller, UtilTask *utilTask);
 
         /**
          * @brief Closes a connection and cleans up resources
          * @param fd File descriptor of the connection to close
-         * @return Connection information string
+         * @return Connection information string (IP:PORT format)
          */
         std::string CloseConnection(int fd);
 
         /**
-         * @brief Cleans up all connections and resources
+         * @brief Closes a connection using its controller pointer
+         * @param controller Pointer to the connection controller to close
+         * @return Connection information string (IP:PORT format)
+         * @note Removes from epoll monitoring and cleans up associated resources
+         */
+        std::string CloseConnection(SOCKController *controller);
+
+        /**
+         * @brief Performs comprehensive cleanup of all network resources
+         * @note Closes all active connections, listening sockets, and epoll instances.
+         *       Called during graceful shutdown or instance destruction.
          */
         void Clean();
 
@@ -149,6 +187,13 @@ namespace HSLL
         SPSockTcp();
 
     public:
+        /**
+         * @brief Initialize global configuration parameters
+         * @param config Reference to the configuration parameters
+         * @note Must be called before creating any instance to ensure proper initialization
+         */
+        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_WARNING});
+
         /**
          * @brief Gets singleton instance
          * @note Not thread-safe
@@ -204,17 +249,14 @@ namespace HSLL
          * @brief Configures watermarks and timeout thresholds for read/write event triggering.
          * @param readMark Minimum number of bytes in the receive buffer to trigger a read event (0 = immediate).
          * @param writeMark Minimum free space in the send buffer to trigger a write event (0 = immediate).
-         * @param readTimeoutMills Maximum time (ms) to wait for new data before triggering a read event regardless of `readMark`.
-         * @param writeTimeoutMills Maximum time (ms) to wait for send availability before triggering a write event regardless of `writeMark`.
          */
-        void SetWaterMark(unsigned int readMark = 0, unsigned int writeMark = 0,
-                          unsigned int readTimeoutMills = UINT32_MAX, unsigned int writeTimeoutMills = UINT32_MAX);
+        void SetWaterMark(unsigned int readMark = 0, unsigned int writeMark = 0);
 
         /**
          * @brief Configures exit signal handling
          * @param sg Signal number to handle
-         * @param etp Event loop exit Callback
-         * @param ctx Context of ExitProc
+         * @param etp Event loop exit callback
+         * @param ctx Context for exit callback
          * @return true on success, false on failure
          * @note All connections are closed when exiting via a signal.
          * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
@@ -238,7 +280,7 @@ namespace HSLL
      * @tparam address_family IP version (IPv4/IPv6)
      */
     template <ADDRESS_FAMILY address_family>
-    class SPSockUdp : public SPSock
+    class SPSockUdp : noncopyable
     {
     private:
         void *ctx;    ///< User-defined context for callbacks
@@ -247,8 +289,8 @@ namespace HSLL
         int sockfd;          ///< Socket file descriptor
         unsigned int status; ///< Internal status flags
 
-        static void *exitCtx;                       ///< Event loop exit ctx
-        static ExitProc exitProc;                   ///< Event loop exit proc
+        static void *exitCtx;                       ///< Event loop exit context
+        static ExitProc exitProc;                   ///< Event loop exit procedure
         static std::atomic<bool> exitFlag;          ///< Event loop control flag
         static SPSockUdp<address_family> *instance; ///< Singleton instance
 
@@ -261,7 +303,7 @@ namespace HSLL
          * @brief Signal handler for graceful shutdown
          * @param sg Signal number received
          */
-        static void DealExit(int sg);
+        static void HandleExit(int sg);
 
         /**
          * @brief Private constructor
@@ -269,6 +311,12 @@ namespace HSLL
         SPSockUdp();
 
     public:
+        /**
+         * @brief Configures minimum logging level
+         * @param minlevel Minimum log level to output
+         */
+        static void Config(LOG_LEVEL minlevel = LOG_LEVEL_WARNING);
+
         /**
          * @brief Gets singleton instance
          * @note Not thread-safe
@@ -280,6 +328,7 @@ namespace HSLL
          * @brief Binds socket to a specified port
          * @param port Port number to bind to
          * @return true on success, false on failure
+         * @note One-time call function
          */
         bool Bind(unsigned short port) SPSOCK_ONE_TIME_CALL;
 
@@ -304,8 +353,8 @@ namespace HSLL
         /**
          * @brief Configures exit signal handling
          * @param sg Signal number to handle
-         * @param etp Event loop exit Callback
-         * @param ctx Context of ExitProc
+         * @param etp Event loop exit callback
+         * @param ctx Context for exit callback
          * @return true on success, false on failure
          * @note All connections are closed when exiting via a signal.
          * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
@@ -331,30 +380,6 @@ namespace HSLL
          */
         static void Release();
     };
-
-    template <ADDRESS_FAMILY address_family>
-    std::atomic<bool> SPSockTcp<address_family>::exitFlag = true;
-
-    template <ADDRESS_FAMILY address_family>
-    std::atomic<bool> SPSockUdp<address_family>::exitFlag = true;
-
-    template <ADDRESS_FAMILY address_family>
-    void *SPSockTcp<address_family>::exitCtx = nullptr;
-
-    template <ADDRESS_FAMILY address_family>
-    void *SPSockUdp<address_family>::exitCtx = nullptr;
-
-    template <ADDRESS_FAMILY address_family>
-    ExitProc SPSockTcp<address_family>::exitProc = nullptr;
-
-    template <ADDRESS_FAMILY address_family>
-    ExitProc SPSockUdp<address_family>::exitProc = nullptr;
-
-    template <ADDRESS_FAMILY address_family>
-    SPSockTcp<address_family> *SPSockTcp<address_family>::instance = nullptr;
-
-    template <ADDRESS_FAMILY address_family>
-    SPSockUdp<address_family> *SPSockUdp<address_family>::instance = nullptr;
 }
 
 #endif

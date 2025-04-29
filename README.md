@@ -11,6 +11,15 @@
 - 🔄 双缓冲队列设计（读/写分离）
 - 📡 零拷贝数据回传支持
 
+## 目录
+
+1. [构建](#构建)
+2. [快速开始](#快速开始)
+3. [SPSock关键函数](#spsock关键函数说明)
+4. [SPController关键函数](#spcontroller关键函数说明)
+5. [SPConfig配置说明](#spconfig配置说明)
+6. [注意事项](#注意事项)
+
 ## 构建
 
 ### makefile构建
@@ -39,113 +48,134 @@ make
 | -DBUILD_STATIC=ON          | 生成静态库             |
 | -DBUILD_TEST=ON            | 编译测试样例           |
 
-## 核心API说明（SOCKController）
+## 快速开始
 
-### 连接状态管理
-| 方法               | 说明                                                                 |
-|--------------------|----------------------------------------------------------------------|
-| **isPeerClosed()** | 检测远端是否关闭连接，返回`true`时应触发资源释放                     |
-| **close()**        | 主动关闭连接，应在错误或通信结束时调用                               |
-
-### 直接数据读写
-| 方法                           | 说明                                                                 |
-|--------------------------------|----------------------------------------------------------------------|
-| **read(void *buf, size_t len)** | 从读缓冲区读取数据，返回实际读取字节数（非阻塞）                     |
-| **write(const void *buf, size_t len)** | 直接发送数据，返回成功字节数，`0`需等待可写事件，`-1`需关闭连接      |
-
-### 缓冲队列操作
-| 方法                          | 说明                                                                 |
-|-------------------------------|----------------------------------------------------------------------|
-| **writeTemp()**               | 数据暂存至写缓冲区，返回实际写入字节数                              |
-| **commitWrite()**             | 提交写缓冲数据，返回剩余未发送字节数                                |
-| **getReadBufferSize()**       | 获取读缓冲区数据量（字节）                                          |
-| **getWriteBufferSize()**      | 获取写缓冲区待发送数据量（字节）                                    |
-
-### 数据回传控制
-| 方法                     | 说明                                                                 |
-|--------------------------|----------------------------------------------------------------------|
-| **writeBack()**          | 直写读缓冲数据到socket，返回`false`表示需关闭连接                   |
-| **moveToWriteBuffer()**  | 将读缓冲数据移至写缓冲（零拷贝），返回移动字节数                    |
-
-### 事件管理
-| 方法                       | 说明                                                                 |
-|----------------------------|----------------------------------------------------------------------|
-| **enableEvents()**         | 动态启用读/写事件监听，失败需关闭连接                               |
-| **renableEvents()**        | 恢复最近事件配置                                                   |
-
-### 上下文访问
-| 方法             | 说明                                |
-|------------------|-------------------------------------|
-| **getCtx()**     | 获取用户绑定的上下文指针            |
-
-## 最佳实践
-
-### 数据转发模式
+### TCP服务端示例
 ```cpp
-// 零拷贝回传模式（推荐）
-if (!ctrl->writeBack()) {
-    ctrl->close();
+#include "SPSock.hpp"
+void echo_read_write_proc(SOCKController *controller)
+{
+    if (controller->isPeerClosed())//对端关闭
+    {
+        controller->close();
+        return;
+    }
+
+    if (!controller->writeBack())//回传
+    {
+        controller->close();
+    }
+    else
+    {
+        bool ret;
+
+        if (controller->getReadBufferSize())//未发送完毕
+            ret = controller->enableEvents(false, true);
+        else
+            ret = controller->enableEvents(true, false);
+
+        if (!ret)//错误处理
+            controller->close();
+    }
 }
 
-// 缓冲中转模式
-size_t moved = ctrl->moveToWriteBuffer();
-if (moved > 0) {
-    ssize_t remain = ctrl->commitWrite();
-    if (remain == -1) {
-        ctrl->close();
-    }
+int main()
+{
+    SPSockTcp<ADDRESS_FAMILY_INET>::Config();//配置
+
+    auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();//获取实例
+
+    if (ins->EnableKeepAlive(true, 120, 2, 10) == false)//设置keepalive
+        return -1;
+    if (ins->SetCallback(nullptr, nullptr, echo_read_write_proc, echo_read_write_proc) == false)//设置读写回调
+        return -1;
+    if (ins->SetSignalExit(SIGINT) == false)//设置退出信号
+        return -1;
+    if (ins->Listen(4567) == false)//设置监听端口
+        return -1;
+
+    ins->EventLoop();//事件循环
+    ins->Release();//释放实例
+    return 0;
 }
 ```
 
-### 错误处理流程
+### UDP服务端示例
+
 ```cpp
-ssize_t sent = ctrl->write(data, len);
-if (sent == -1) {
-    // 严重错误立即关闭
-    ctrl->close();
-} else if (sent == 0) {
-    // 临时不可写，启用写事件监听
-    if (!ctrl->enableEvents(false, true)) {
-        ctrl->close();
-    }
+void echo_rcp(void *ctx, const char *data, ssize_t size, const char *ip, unsigned short port)
+{
+    auto ins = (SPSockUdp<ADDRESS_FAMILY_INET> *)ctx;
+    ins->SendTo(data, size, ip, port);//数据回传
+}
+
+int main()
+{
+    SPSockUdp<ADDRESS_FAMILY_INET>::Config();//配置
+    
+    auto ins = SPSockUdp<ADDRESS_FAMILY_INET>::GetInstance();//获取实例
+
+    if (ins->Bind(4567)==false)//绑定端口
+        return -1;
+
+    if (ins->SetCallback(echo_rcp, ins)==false)//设置回调
+        return -1;
+
+    if (ins->SetSignalExit(SIGINT)==false)//设置退出信号
+        return -1;
+
+    ins->EventLoop();//事件循环
+    ins->Release();//释放实例
 }
 ```
 
-## 性能调优
+## SPSock关键函数说明
 
-1. **缓冲区配置**  
-   通过`SPConfig`调整读写缓冲区大小：
-   ```cpp
-   SPConfig cfg {
-       .READ_BSIZE = 1024 * 1024,  // 1MB读缓冲
-       .WRITE_BSIZE = 512 * 1024   // 512KB写缓冲
-   };
-   SPSock::Config(cfg);
-   ```
+| 函数名              | 说明                                                                 | 重要参数                             |
+|---------------------|----------------------------------------------------------------------|--------------------------------------|
+| Listen()            | 启动指定端口的监听                                                   | port: 监听端口                       |
+| EventLoop()         | 启动事件循环处理网络事件                                             | policy: 线程池满载策略               |
+| SetCallback()       | 设置各类事件回调函数                                                 | 支持连接/关闭/读/写回调              |
+| EnableKeepAlive()   | 配置TCP保活机制                                                     | enable: 开关, aliveSeconds: 空闲时间 |
+| SetSignalExit()     | 设置信号处理函数实现优雅退出                                         | sg: 捕获的信号                       |
+| SetWaterMark()      | 设置读写缓冲区水位线                                                 | readMark/writeMark: 触发阈值         |
 
-2. **批量提交优化**  
-   使用`writeTemp`+`commitWrite`组合减少系统调用：
-   ```cpp
-   // 批量写入缓冲区
-   size_t total = ctrl->writeTemp(batchData, batchSize);
-   // 统一提交
-   ssize_t remain = ctrl->commitWrite();
-   ```
+## SPController关键函数说明
 
-3. **事件控制**  
-   动态调整事件订阅提升吞吐量：
-   ```cpp
-   // 数据积压时暂停读事件
-   if (ctrl->getWriteBufferSize() > HIGH_WATERMARK) {
-       ctrl->enableEvents(true, false);
-   }
-   ```
+| 函数名            | 说明                                                                 |
+|-------------------|----------------------------------------------------------------------|
+| read()            | 从读缓冲区取出数据                                                   |
+| write()           | 直接写入套接字（非缓冲）                                             |
+| writeTemp()       | 写入写缓冲区（延迟发送）                                             |
+| commitWrite()     | 提交缓冲区数据到套接字                                               |
+| getReadBufferSize() | 获取可读数据量                                                       |
+| enableEvents()    | 重新启用指定事件监听                                                 |
 
-## 监测指标
+## SPConfig配置说明
 
-| 指标名称                | 获取方法                     | 说明                      |
-|-------------------------|------------------------------|---------------------------|
-| 活跃连接数              | `GetConnectionCount()`       | 当前维护的连接总数        |
-| 读缓冲使用率            | `getReadBufferSize()`        | 当前连接读缓冲数据量      |
-| 写缓冲积压量            | `getWriteBufferSize()`       | 待发送数据字节数          |
-| 事件循环吞吐量          | 自定义统计逻辑               | 单位时间内处理事件数      |
+| 参数名                          | 说明                                                                 | 限制条件                                                                 |
+|---------------------------------|----------------------------------------------------------------------|--------------------------------------------------------------------------|
+| READ_BSIZE                     | 读缓冲区大小                                                        | 必须为1024的倍数，≥1KB                                                  |
+| WRITE_BSIZE                    | 写缓冲区大小                                                        | 必须为1024的倍数，≥1KB                                                  |
+| BUFFER_POOL_PEER_ALLOC_NUM     | 缓冲池单次分配块数                                                  | 1-1024                                                                  |
+| BUFFER_POOL_MIN_BLOCK_NUM      | 缓冲池最小块数                                                      | ≥ BUFFER_POOL_PEER_ALLOC_NUM                                            |
+| EPOLL_MAX_EVENT_BSIZE          | 单次epoll循环处理的最大事件数                                        | 1-65535                                                                 |
+| EPOLL_TIMEOUT_MILLISECONDS     | epoll等待超时时间（毫秒）                                           | -1: 永久阻塞，0: 非阻塞立即返回，>0: 指定超时时间                       |
+| EPOLL_DEFAULT_EVENT            | 默认epoll事件监听类型                                               | 有效组合：EPOLLIN、EPOLLOUT 或 EPOLLIN\|EPOLLOUT                        |
+| THREADPOOL_QUEUE_LENGTH        | 线程池任务队列最大容量                                              | 1-1048576                                                              |
+| THREADPOOL_DEFAULT_THREADS_NUM | 系统核心数不可用时默认创建的线程数                                  | 1-1024                                                                 |
+| THREADPOOL_BATCH_SIZE_SUBMIT   | 批量提交任务到线程池的批处理大小                                    | < THREADPOOL_QUEUE_LENGTH                                              |
+| THREADPOOL_BATCH_SIZE_PROCESS  | 线程池处理任务的批处理大小                                          | 1-1024                                                                 |
+| MIN_LOG_LEVEL                  | 最低日志输出等级                                                    | 有效枚举值：LOG_LEVEL::DEBUG/INFO/WARNING/ERROR/FATAL                  |
+
+## 注意事项
+
+1.必须在获取实例前调用`Config()`初始化配置
+
+2.实例获取后必须通过`Release()`释放
+
+3.读写回调在线程池内进行,连接建立和关闭回调在线程循环中进行
+
+4.每次触发回调后必须调用`enableEvents()`重新启用指定事件监听
+
+5.对端关闭且读取完所有数据后应当立即调用`SOCKController`的close方法释放资源

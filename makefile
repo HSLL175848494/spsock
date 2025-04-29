@@ -27,7 +27,7 @@ ifdef test
     SAMPLE_TARGETS := $(addprefix $(BUILD_DIR)/, $(notdir $(SAMPLE_SRC:.cpp=)))
 endif
 
-SOURCES := SPBuffer.cpp SPController.cpp SPInitializer.cpp SPSock.cpp
+SOURCES := SPBuffer.cpp SPController.cpp SPDeferred.cpp SPSock.cpp
 
 .PHONY: all clean
 

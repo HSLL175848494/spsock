@@ -29,7 +29,7 @@ void echo_read_write_proc(SOCKController *controller)
 
 int main()
 {
-    SPSockTcp<ADDRESS_FAMILY_INET>::Config({16 * 1024, 32 * 1024, 10, 50, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_INFO});
+    SPSockTcp<ADDRESS_FAMILY_INET>::Config();
 
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();
 

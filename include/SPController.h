@@ -13,15 +13,19 @@ namespace HSLL
     class SOCKController
     {
     public:
-        /**
+         /**
          * @brief Gets the context pointer associated with this controller
          * @return The context pointer
          */
         void *getCtx();
 
         /**
-         * @brief Checks whether the peer (remote endpoint) has closed the connection
-         * @return true if the peer has closed the connection, false otherwise
+         * @brief Checks if connection is in half-closed state
+         * @return true indicates:
+         *         - Peer initiated shutdown sequence (FIN received)
+         *         - Write operations are disabled
+         *         - Read buffer may still contain available data
+         *         - Connection should be closed after read buffer exhaustion
          */
         bool isPeerClosed();
 
@@ -43,15 +47,6 @@ namespace HSLL
         size_t peek(void *buf, size_t len);
 
         /**
-         * @brief Writes data directly to the socket
-         * @param buf Data buffer to send
-         * @param len Number of bytes to send
-         * @return Number of bytes sent, 0 for EAGAIN/EWOULDBLOCK, -1 for errors
-         * @note Call Close() or EnableEvent() on error return
-         */
-        ssize_t write(const void *buf, size_t len);
-
-        /**
          * @brief Writes data to the write buffer (temporary storage)
          * @param buf Data buffer to write
          * @param len Number of bytes to write
@@ -60,23 +55,55 @@ namespace HSLL
         size_t writeTemp(const void *buf, size_t len);
 
         /**
+         * @brief Writes data directly to the socket
+         * @param buf Data buffer to send
+         * @param len Number of bytes to send
+         * @return Number of bytes sent on success,
+         *         0 for EAGAIN/EWOULDBLOCK (temporary congestion),
+         *        -1 for unrecoverable errors (e.g., EBADF, ENOTSOCK),
+         *        -2 if connection peer initiated shutdown (EPIPE/ECONNRESET)
+         * @note When returning -2:
+         *       - Read buffer may still contain pending data (check getReadBufferSize())
+         *       - Subsequent write operations will fail
+         *       - Must call Close() after consuming all read buffer data
+         */
+        ssize_t write(const void *buf, size_t len);
+
+        /**
          * @brief Commits buffered writes to the socket
-         * @return Number of bytes remaining in buffer (0 if all sent), -1 on error
-         * @note On error, call Close() or EnableEvent()
+         * @return Number of bytes remaining in write buffer (0 if all sent),
+         *        -1 for system errors,
+         *        -2 if connection is half-closed by peer
+         * @note For return code -2:
+         *       - Connection is in half-closed state (FIN received)
+         *       - Continue reading until getReadBufferSize() == 0
+         *       - Must eventually call Close() to release resources
          */
         ssize_t commitWrite();
+
+        /**
+         * @brief Direct writeback from read buffer
+         * @return Total bytes successfully written (>=0),
+         *        -1 for system errors,
+         *        -2 if connection reset by peer
+         * @note When returning -2:
+         *       - Read buffer preserves unprocessed data
+         *       - Application should finalize read operations
+         *       - Must call Close() after buffer processing
+         */
+        ssize_t writeBack();
 
         /**
          * @brief Get the size of data available in the read buffer
          * @return Number of bytes available to read
          */
-        unsigned int getReadBufferSize();
+        size_t getReadBufferSize();
 
         /**
          * @brief Get the size of data pending in the write buffer
          * @return Number of bytes waiting to be sent
          */
-        unsigned int getWriteBufferSize();
+        size_t getWriteBufferSize();
 
         /**
          * @brief Get pointer to read buffer instance
@@ -94,50 +121,40 @@ namespace HSLL
          * @brief Get read buffer capacity from config
          * @return Read buffer capacity in bytes defined by global config
          */
-        unsigned int getReadBufferCapacity();
+        size_t getReadBufferCapacity();
 
         /**
          * @brief Get write buffer capacity from config
          * @return Write buffer capacity in bytes defined by global config
          */
-        unsigned int getWriteBufferCapacity();
-
-        /**
-         * @brief Directly write back data from read buffer to socket
-         * This function first sends any pending data in the write buffer. If the write buffer
-         * is completely emptied, it then attempts to send data directly from the read buffer
-         * to the socket. Unsent data remains in the read buffer and is not moved to write buffer.
-         * @return true if operation succeeded (including partial writes),
-         * @return false if socket error occurred (connection should be closed)
-         */
-        bool writeBack();
+        size_t getWriteBufferCapacity();
 
         /**
          * @brief Move data from read buffer to write buffer
+         *
          * Transfers as much data as possible from the read buffer to the write buffer
          * without involving actual I/O operations. This is useful for implementing
          * echo services or data reflection patterns.
          * @return size Number of bytes actually moved between buffers
          */
-        unsigned int moveToWriteBuffer();
+        size_t moveToWriteBuffer();
 
         /**
          * @brief Re-enables event monitoring for the socket
          * @param read Enable read events
          * @param write Enable write events
          * @return true on success, false on failure (requires Close())
+         * @note This function and close() MUST NOT be called within the same callback
+         *       unless this function returns false. If enableEvents fails, close()
+         *       MUST be called immediately to clean up resources.
          */
         bool enableEvents(bool read = false, bool write = false);
 
         /**
-         * @brief Re-enables event monitoring with previously configured events
-         * @return true on success, false on failure (requires Close())
-         */
-        bool renableEvents();
-
-        /**
-         * @brief Closes the connection actively
-         * @note Should be called after detecting errors
+         * @brief Close the connection actively
+         * @note Should be called after detecting errors. This function and enableEvents()
+         *       MUST NOT be both called within the same callback context unless enableEvents()
+         *       has already returned false. Concurrent use may cause undefined behavior.
          */
         void close();
     };

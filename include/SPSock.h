@@ -10,11 +10,12 @@
 
 namespace HSLL
 {
-
     /**
-     * @brief Socket base class
+     * @brief Main TCP socket management class
+     * @tparam address_family IP version (IPv4/IPv6)
      */
-    class SPSock : noncopyable
+    template <ADDRESS_FAMILY address_family>
+    class SPSockTcp : noncopyable
     {
     public:
         /**
@@ -23,16 +24,7 @@ namespace HSLL
          * @note Must be called before creating any instance to ensure proper initialization
          */
         static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_WARNING});
-    };
 
-    /**
-     * @brief Main TCP socket management class
-     * @tparam address_family IP version (IPv4/IPv6)
-     */
-    template <ADDRESS_FAMILY address_family = ADDRESS_FAMILY::ADDRESS_FAMILY_INET>
-    class SPSockTcp : public SPSock
-    {
-    public:
         /**
          * @brief Gets singleton instance
          * @note Not thread-safe
@@ -85,10 +77,17 @@ namespace HSLL
         bool SetCallback(ConnectProc cnp = nullptr, CloseProc csp = nullptr, ReadProc rdp = nullptr, WriteProc wtp = nullptr);
 
         /**
+         * @brief Configures watermarks and timeout thresholds for read/write event triggering.
+         * @param readMark Minimum number of bytes in the receive buffer to trigger a read event (0 = immediate).
+         * @param writeMark Minimum free space in the send buffer to trigger a write event (0 = immediate).
+         */
+        void SetWaterMark(unsigned int readMark = 0, unsigned int writeMark = 0);
+
+        /**
          * @brief Configures exit signal handling
          * @param sg Signal number to handle
-         * @param etp Event loop exit Callback
-         * @param ctx Context of ExitProc
+         * @param etp Event loop exit callback
+         * @param ctx Context for exit callback
          * @return true on success, false on failure
          * @note All connections are closed when exiting via a signal.
          * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
@@ -111,10 +110,16 @@ namespace HSLL
      * @brief Main UDP socket management class
      * @tparam address_family IP version (IPv4/IPv6)
      */
-    template <ADDRESS_FAMILY address_family = ADDRESS_FAMILY::ADDRESS_FAMILY_INET>
-    class SPSockUdp : public SPSock
+    template <ADDRESS_FAMILY address_family>
+    class SPSockUdp : noncopyable
     {
     public:
+        /**
+         * @brief Configures minimum logging level
+         * @param minlevel Minimum log level to output
+         */
+        static void Config(LOG_LEVEL minlevel = LOG_LEVEL_WARNING);
+
         /**
          * @brief Gets singleton instance
          * @note Not thread-safe
@@ -126,6 +131,7 @@ namespace HSLL
          * @brief Binds socket to a specified port
          * @param port Port number to bind to
          * @return true on success, false on failure
+         * @note One-time call function
          */
         bool Bind(unsigned short port) SPSOCK_ONE_TIME_CALL;
 
@@ -150,8 +156,8 @@ namespace HSLL
         /**
          * @brief Configures exit signal handling
          * @param sg Signal number to handle
-         * @param etp Event loop exit Callback
-         * @param ctx Context of ExitProc
+         * @param etp Event loop exit callback
+         * @param ctx Context for exit callback
          * @return true on success, false on failure
          * @note All connections are closed when exiting via a signal.
          * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
@@ -165,16 +171,6 @@ namespace HSLL
          * @return true on success, false on failure
          */
         bool SetCallback(RecvProc rcp, void *ctx = nullptr);
-
-        /**
-         * @brief Configures watermarks and timeout thresholds for read/write event triggering.
-         * @param readMark Minimum number of bytes in the receive buffer to trigger a read event (0 = immediate).
-         * @param writeMark Minimum free space in the send buffer to trigger a write event (0 = immediate).
-         * @param readTimeoutMills Maximum time (ms) to wait for new data before triggering a read event regardless of `readMark`.
-         * @param writeTimeoutMills Maximum time (ms) to wait for send availability before triggering a write event regardless of `writeMark`.
-         */
-        void SetWaterMark(unsigned int readMark = 0, unsigned int writeMark = 0,
-                          unsigned int readTimeoutMills = UINT32_MAX, unsigned int writeTimeoutMills = UINT32_MAX);
 
         /**
          * @brief Signals event loop to exit

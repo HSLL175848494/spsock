@@ -27,7 +27,7 @@ option(BUILD_STATIC "Build as static library" OFF)
 set(SOURCES
     SPBuffer.cpp
     SPController.cpp
-    SPInitializer.cpp
+    SPDeferred.cpp
     SPSock.cpp
 )
 

@@ -1,22 +1,13 @@
 #ifndef HSLL_SPINITIALIZER
 #define HSLL_SPINITIALIZER
 
-#include <assert.h>
-
 #include "SPTask.hpp"
 #include "SPController.h"
 
-namespace HSLL
+namespace HSLL::DEFER
 {
-    /**
-     * @brief Provides delayed initialization for function pointers
-     * @details This class serves as a mediator for function pointers that need to reference
-     *          post-defined functions. It ensures these pointers are initialized after
-     *          their target functions are defined, solving static initialization order issues.
-     */
-    class SPInitializer : noncopyable
+    struct SPDefered
     {
-    public:
         /**
          * @brief Processes socket read operations and data handling
          * @param ctx Socket controller managing connection state and buffers
@@ -35,6 +26,7 @@ namespace HSLL
          */
         static void REnableFunc(SOCKController *controller);
     };
+
 }
 
 #endif

@@ -4,7 +4,7 @@
 namespace HSLL
 {
     // SOCKController Implementation
-    bool SOCKController::init(int fd, void *ctx, FuncClose funcClose, FuncEvent funcEvent, int events)
+    bool SOCKController::init(int fd, void *ctx)
     {
         if (!readBuf.Init())
             return false;
@@ -14,12 +14,8 @@ namespace HSLL
 
         this->fd = fd;
         this->ctx = ctx;
-        this->funcClose = funcClose;
-        this->funcEvent = funcEvent;
-        this->events = events;
+        this->events = configGlobal.EPOLL_DEFAULT_EVENT;
         peerClosed = false;
-        tvRead = getTimestamp();
-        tvWrite = tvRead;
         ipPort = "[" + std::string(ip) + "]:" + std::to_string(port);
         return true;
     }
@@ -107,6 +103,11 @@ namespace HSLL
                 goto retry;
             else if (errno == EAGAIN || errno == EWOULDBLOCK)
                 return 0;
+            else if (errno == EPIPE || errno == ECONNRESET)
+            {
+                peerClosed = true;
+                return -2;
+            }
             else
                 return -1;
         }
@@ -131,7 +132,7 @@ namespace HSLL
             else if (bytes == 0)
                 return writeBuf.bytesRead();
             else
-                return -1;
+                return bytes;
 
             if (bytes < len)
                 return writeBuf.bytesRead();
@@ -139,12 +140,12 @@ namespace HSLL
         return 0;
     }
 
-    unsigned int SOCKController::getReadBufferSize()
+    size_t SOCKController::getReadBufferSize()
     {
         return readBuf.bytesRead();
     }
 
-    unsigned int SOCKController::getWriteBufferSize()
+    size_t SOCKController::getWriteBufferSize()
     {
         return writeBuf.bytesRead();
     }
@@ -159,50 +160,45 @@ namespace HSLL
         return &writeBuf;
     }
 
-    unsigned int SOCKController::getReadBufferCapacity()
+    size_t SOCKController::getReadBufferCapacity()
     {
         return configGlobal.READ_BSIZE;
     }
 
-    unsigned int SOCKController::getWriteBufferCapacity()
+    size_t SOCKController::getWriteBufferCapacity()
     {
         return configGlobal.WRITE_BSIZE;
     }
 
-    bool SOCKController::writeBack()
+    ssize_t SOCKController::writeBack()
     {
         ssize_t writeResult = commitWrite();
 
-        if (writeResult == -1)
-            return false;
-
-        if (writeResult > 0)
-            return true;
+        if (writeResult != 0)
+            return writeResult;
 
         while (true)
         {
             unsigned int chunk = readBuf.distanceRead();
+
             if (chunk == 0)
                 break;
 
             ssize_t sent = writeInner(readBuf.readPtr(), chunk);
+
             if (sent > 0)
-            {
                 readBuf.commitRead(sent);
-            }
             else if (sent == 0)
-            {
                 break;
-            }
             else
-            {
-                return false;
-            }
+                return sent;
+
+            writeResult += sent;
         }
-        return true;
+        return writeResult;
     }
 
-    unsigned int SOCKController::moveToWriteBuffer()
+    size_t SOCKController::moveToWriteBuffer()
     {
         unsigned int moved = 0;
         unsigned int maxMove = std::min(readBuf.bytesRead(), writeBuf.bytesWrite());
@@ -226,12 +222,13 @@ namespace HSLL
 
     bool SOCKController::enableEvents(bool read, bool write)
     {
-        bool ret = funcEvent(fd, read, write);
+        bool ret = DEFER::funcEvent(fd, read, write);
         events = 0;
         if (ret)
         {
             if (read)
                 events |= EPOLLIN;
+
             if (write)
                 events |= EPOLLOUT;
         }
@@ -240,19 +237,12 @@ namespace HSLL
 
     bool SOCKController::renableEvents()
     {
-        bool ret = funcEvent(fd, events & EPOLLIN, events & EPOLLOUT);
+        bool ret = DEFER::funcEvent(fd, events & EPOLLIN, events & EPOLLOUT);
         if (!ret)
             events = 0;
         return ret;
     }
-
-    long long SOCKController::getTimestamp()
-    {
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        return (long long)tv.tv_sec * 1000 + tv.tv_usec / 1000;
-    }
-
+    
     void SOCKController::setEvent(int event)
     {
         this->event = event;
@@ -260,6 +250,6 @@ namespace HSLL
 
     void SOCKController::close()
     {
-        funcClose(fd);
+        DEFER::funcClose(this);
     }
 }

@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
+#include <unordered_set>
 
 namespace HSLL
 {
@@ -17,7 +18,7 @@ namespace HSLL
  */
 #define SPSOCK_ONE_TIME_CALL
 
-    // Forward declaration of SOCKController class
+    // Forward declaration
     class SOCKController;
 
     /// Callback function type for read events
@@ -39,7 +40,7 @@ namespace HSLL
     ///< Re-listen for the event function pointer
     typedef void (*REnableProc)(SOCKController *controller);
     ///< File descriptor close callback function type
-    typedef void (*FuncClose)(int fd);
+    typedef void (*FuncClose)(SOCKController *controller);
     ///< Socket event control function type
     typedef bool (*FuncEvent)(int fd, bool read, bool write);
 
@@ -91,15 +92,13 @@ namespace HSLL
     };
 
     /**
-     * @brief Structure defining watermark thresholds and timeouts
-     * @details Used for flow control and timeout handling in network I/O operations
+     * @brief Structure defining watermark thresholds
+     * @details Used for flow control in network I/O operations
      */
     struct SPWaterMark
     {
-        unsigned int readMark;          ///< High watermark for read buffer threshold
-        unsigned int writeMark;         ///< High watermark for write buffer threshold
-        unsigned int readTimeoutMills;  ///< Read operation timeout in milliseconds
-        unsigned int writeTimeoutMills; ///< Write operation timeout in milliseconds
+        unsigned int readMark;  ///< High watermark for read buffer threshold
+        unsigned int writeMark; ///< High watermark for write buffer threshold
     };
 
     /**
@@ -130,8 +129,8 @@ namespace HSLL
      */
     struct CloseList
     {
-        std::mutex mtx;             ///< Mutex for thread synchronization
-        std::list<int> connections; ///< List of file descriptors to be closed
+        std::mutex mtx;
+        std::list<SOCKController *> connections;
     };
 
     /**
@@ -183,29 +182,14 @@ namespace HSLL
      */
     namespace DEFER
     {
-        /**
-         * @brief Global socket configuration instance
-         * @details Contains runtime configuration parameters for socket operations
-         */
+        class SPDefered;
+        
         extern SPConfig configGlobal;
-
-        /**
-         * @brief Global watermark configuration instance
-         * @details Contains thresholds for flow control and timeout settings
-         */
         extern SPWaterMark markGlobal;
-
-        /**
-         * @brief Function pointer for socket task processing
-         * @details Acts as a mediator for delayed initialization of task handling logic.
-         */
         extern TaskProc taskProc;
-
-        /**
-         * @brief Function pointer for event re-enabling operations
-         * @details Provides deferred initialization for connection recovery logic.
-         */
         extern REnableProc renableProc;
+        extern FuncClose funcClose;
+        extern FuncEvent funcEvent;
     }
 }
 
