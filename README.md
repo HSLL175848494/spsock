@@ -178,4 +178,4 @@ int main()
 
 4.每次触发回调后必须调用`enableEvents()`重新启用指定事件监听
 
-5.对端关闭且读取完所有数据后应当立即调用`SOCKController`的close方法释放资源
+5.对端关闭且读取完所有数据后应当立即调用`SOCKController`的`close`方法释放资源
