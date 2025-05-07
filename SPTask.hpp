@@ -9,28 +9,29 @@ using namespace HSLL::DEFER;
 
 namespace HSLL
 {
-
     /**
-     * @brief Read or write task for thread pool
+     * @brief Socket read/write task structure for thread pool operations
+     * @details Contains the execution context and callback function for socket I/O operations
      */
     struct SockTask
     {
-        ReadWriteProc proc;  ///< Read/Write event callback
-        SOCKController *ctx; ///< Context for task
+        ReadWriteProc proc;  ///< Callback function for read/write operations
+        SOCKController *ctx; ///< Socket controller context containing connection state
 
     public:
         ~SockTask() = default;
         SockTask() = default;
 
         /**
-         * @brief Construct a new SockTask object
-         * @param ctx Context pointer for the task
-         * @param proc Callback function to execute
+         * @brief Construct a socket task with specific context and handler
+         * @param ctx Pointer to socket controller context
+         * @param proc Callback function to handle I/O operations
          */
         SockTask(SOCKController *ctx, ReadWriteProc proc) : ctx(ctx), proc(proc) {};
 
         /**
-         * @brief Execute the task's callback function
+         * @brief Execute the registered callback function
+         * @note Wrapped through taskProc to handle error conditions
          */
         void execute()
         {
@@ -39,48 +40,46 @@ namespace HSLL
     };
 
     /**
-     * @brief Utility for handling single task operations
+     * @brief Single task submission utility
+     * @note Manages individual task submission to thread pool with fallback handling
      */
     struct UtilTask_Single : noncopyable
     {
-        FULL_LOAD_POLICY policy;    ///< Policy when thread pool is full
-        ThreadPool<SockTask> *pool; ///< Pointer to thread pool
+        bool flag = true;           ///< Submission availability flag
+        ThreadPool<SockTask> *pool; ///< Associated thread pool instance
 
         /**
-         * @brief Append a task to the thread pool
-         * @param ctx Context for the task
-         * @param proc Callback function
+         * @brief Add a new task to the thread pool
+         * @param ctx Socket controller context for the task
+         * @param proc Callback function to execute
+         * @note Reactivates processing through renableProc() if submission fails
          */
         void append(SOCKController *ctx, ReadWriteProc proc)
         {
+            if (!flag)
+                renableProc(ctx);
+
             SockTask task(ctx, proc);
             if (!pool->append(task))
             {
-                if (policy == FULL_LOAD_POLICY_WAIT)
-                    pool->wait_append(task);
-                else
-                    renableProc(ctx);
+                flag = false;
+                renableProc(ctx);
             }
         }
-
-        /**
-         * @brief Submit tasks (no-op for single task)
-         */
-        void commit() {}
     };
 
     /**
-     * @brief Utility for handling multiple tasks in batch
+     * @brief Batch task submission utility with circular buffer
+     * @note Implements bulk submission with configurable batch sizes and failure rollback
      */
     struct UtilTask_Multipe : noncopyable
     {
-        unsigned int back = 0;     ///< Back index of task buffer
-        unsigned int front = 0;    ///< Front index of task buffer
-        unsigned int size = 0;     ///< Current number of buffered tasks
-        SockTask *tasks = nullptr; ///< Dynamic task buffer
-
-        FULL_LOAD_POLICY policy;    ///< Policy when thread pool is full
-        ThreadPool<SockTask> *pool; ///< Pointer to thread pool
+        bool flag = true;           ///< Batch submission availability flag
+        unsigned int back = 0;      ///< Circular buffer tail position
+        unsigned int front = 0;     ///< Circular buffer head position
+        unsigned int size = 0;      ///< Current tasks in buffer
+        SockTask *tasks = nullptr;  ///< Circular buffer storage
+        ThreadPool<SockTask> *pool; ///< Associated thread pool instance
 
         ~UtilTask_Multipe()
         {
@@ -89,12 +88,15 @@ namespace HSLL
         }
 
         /**
-         * @brief Append a task to the buffer
-         * @param ctx Context for the task
+         * @brief Add task to buffer and trigger commit when full
+         * @param ctx Socket controller context
          * @param proc Callback function
          */
         void append(SOCKController *ctx, ReadWriteProc proc)
         {
+            if (!flag)
+                renableProc(ctx);
+
             tasks[front] = SockTask(ctx, proc);
             front = (front + 1) % configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT;
             size++;
@@ -105,6 +107,7 @@ namespace HSLL
 
         /**
          * @brief Submit buffered tasks to thread pool
+         * @details Handles partial submission failures and reactivates unsubmitted tasks
          */
         void commit()
         {
@@ -126,27 +129,16 @@ namespace HSLL
 
             if (submitted != num)
             {
-                if (policy == FULL_LOAD_POLICY_DISCARD)
+                unsigned int remaining = num - submitted;
+                for (unsigned int i = 0; i < remaining; ++i)
                 {
-                    unsigned int remaining = num - submitted;
-                    for (unsigned int i = 0; i < remaining; ++i)
-                    {
-                        unsigned int index = (back + submitted + i) % configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT;
-                        renableProc(tasks[index].ctx);
-                    }
-                    back = front;
-                    size = 0;
-                    return;
+                    unsigned int index = (back + submitted + i) % configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT;
+                    renableProc(tasks[index].ctx);
                 }
-                else
-                {
-                    unsigned int num2 = num - submitted;
-
-                    if (num2 == 1)
-                        pool->wait_append(tasks[back + submitted]);
-                    else
-                        pool->wait_append_bulk(tasks + back + submitted, num2);
-                }
+                back = front;
+                size = 0;
+                flag = false;
+                return;
             }
 
             size -= num;
@@ -158,40 +150,38 @@ namespace HSLL
     };
 
     /**
-     * @brief Unified task submission utility
-     * @details Provides a unified interface for both single and batch task submission.
-     *          Automatically selects the appropriate implementation based on batch size.
+     * @brief Unified task submission interface
+     * @details Automatically selects between single and batch submission modes
+     *          based on global configuration settings
      */
     class UtilTask : noncopyable
     {
-        UtilTask_Single ts;  ///< Single task submission handler
-        UtilTask_Multipe tm; ///< Batch task submission handler
+        UtilTask_Single ts;  ///< Single task handler
+        UtilTask_Multipe tm; ///< Batch task handler
 
     public:
         /**
-         * @brief Construct a new UtilTask object
-         * @param pool Pointer to thread pool
-         * @param policy Full-load policy (WAIT/DISCARD)
+         * @brief Initialize task submission system
+         * @param pool Thread pool to use for task execution
+         * @note Allocates batch buffer if configured for bulk operations
          */
-        UtilTask(ThreadPool<SockTask> *pool, FULL_LOAD_POLICY policy)
+        UtilTask(ThreadPool<SockTask> *pool)
         {
             if (configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT == 1)
             {
                 ts.pool = pool;
-                ts.policy = policy;
             }
             else
             {
                 tm.pool = pool;
-                tm.policy = policy;
                 tm.tasks = new SockTask[configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT];
             }
         }
 
         /**
-         * @brief Append a task for submission
+         * @brief Add task to submission queue
          * @param ctx Socket controller context
-         * @param proc Procedure to execute
+         * @param proc Callback to execute
          */
         void append(SOCKController *ctx, ReadWriteProc proc)
         {
@@ -202,15 +192,20 @@ namespace HSLL
         }
 
         /**
-         * @brief Commit pending tasks to thread pool
-         * @details For batch mode, forces submission of buffered tasks
+         * @brief Reset submission state and flush remaining tasks
+         * @note Should be called after submission failures to maintain consistency
          */
-        void commit()
+        void reset()
         {
             if (configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT == 1)
-                ts.commit();
+            {
+                ts.flag = true;
+            }
             else
+            {
                 tm.commit();
+                tm.flag = true;
+            }
         }
     };
 }

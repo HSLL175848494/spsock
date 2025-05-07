@@ -443,7 +443,7 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockTcp<address_family>::EventLoop(FULL_LOAD_POLICY policy)
+    bool SPSockTcp<address_family>::EventLoop()
     {
         if ((status & 0x8) == 0x8)
         {
@@ -472,7 +472,7 @@ namespace HSLL
         if (!Prepare(events, &pool))
             return false;
 
-        UtilTask utilTask(&pool, policy);
+        UtilTask utilTask(&pool);
 
         HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop started");
 
@@ -492,7 +492,7 @@ namespace HSLL
 
             HandleCloseList();
             HandleEvents(events, nfds, &utilTask);
-            utilTask.commit();
+            utilTask.reset();
         }
 
         status |= 0x8;
@@ -681,7 +681,7 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockUdp<address_family>::EventLoop(FULL_LOAD_POLICY policy)
+    bool SPSockUdp<address_family>::EventLoop()
     {
         if ((status & 0x8) == 0x8)
         {

@@ -63,15 +63,6 @@ namespace HSLL
     };
 
     /**
-     * @brief Policy options when thread pool is full
-     */
-    enum FULL_LOAD_POLICY
-    {
-        FULL_LOAD_POLICY_WAIT,   ///< Block and wait until space becomes available in queue
-        FULL_LOAD_POLICY_DISCARD ///< Silently discard new tasks when queue is full
-    };
-
-    /**
      * @brief Enumeration for log severity levels
      */
     enum LOG_LEVEL

@@ -42,11 +42,10 @@ namespace HSLL
 
         /**
          * @brief Main event processing loop
-         * @param policy Full load strategy, wait or abandon
          * @return true on success, false on failure
          * @note One-time call function
          */
-        bool EventLoop(FULL_LOAD_POLICY policy = FULL_LOAD_POLICY_DISCARD) SPSOCK_ONE_TIME_CALL;
+        bool EventLoop() SPSOCK_ONE_TIME_CALL;
 
         /**
          * @brief Configures linger options
@@ -137,11 +136,10 @@ namespace HSLL
 
         /**
          * @brief Main event processing loop for UDP
-         * @param policy Full load policy
          * @return true on success, false on failure
          * @note One-time call function
          */
-        bool EventLoop(FULL_LOAD_POLICY policy = FULL_LOAD_POLICY_DISCARD) SPSOCK_ONE_TIME_CALL;
+        bool EventLoop() SPSOCK_ONE_TIME_CALL;
 
         /**
          * @brief Sends data to a specified IP and port
