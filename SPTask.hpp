@@ -35,7 +35,7 @@ namespace HSLL
          */
         void execute()
         {
-            taskProc(ctx, proc);
+            proc(ctx);
         }
     };
 

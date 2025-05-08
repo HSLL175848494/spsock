@@ -22,7 +22,6 @@ namespace HSLL
         friend class DEFER::SPDefered;
 
         int fd;          ///< Socket file descriptor
-        int event;       ///< Currently triggered epoll event
         int events;      ///< Bitmask of currently active epoll events (EPOLLIN/EPOLLOUT)
         bool peerClosed; ///< Whether the peer (remote endpoint) has closed the connection
 
@@ -71,12 +70,6 @@ namespace HSLL
          * @return true on success, false on failure (requires Close())
          */
         bool renableEvents();
-
-        /**
-         * @brief Set the currently triggered epoll event
-         * @param buf epoll event
-         */
-        void setEvent(int event);
 
     public:
         /**

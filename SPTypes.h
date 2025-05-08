@@ -83,13 +83,15 @@ namespace HSLL
     };
 
     /**
-     * @brief Structure defining watermark thresholds
-     * @details Used for flow control in network I/O operations
+     * @brief Structure defining watermark thresholds for flow control
+     * @details Used to manage event triggering in network I/O operations based on buffer occupancy levels.
+     * @note Read events are triggered when the read buffer contains at least readMark bytes of data.
+     * Write events are triggered when pending data in the write buffer falls below or equals writeMark.
      */
     struct SPWaterMark
     {
-        unsigned int readMark;  ///< High watermark for read buffer threshold
-        unsigned int writeMark; ///< High watermark for write buffer threshold
+        unsigned int readMark;  ///< High watermark for read buffer (triggers when data >= this value)
+        unsigned int writeMark; ///< Low watermark for write buffer (triggers when pending data <= this value)
     };
 
     /**
@@ -174,10 +176,9 @@ namespace HSLL
     namespace DEFER
     {
         class SPDefered;
-        
+
         extern SPConfig configGlobal;
         extern SPWaterMark markGlobal;
-        extern TaskProc taskProc;
         extern REnableProc renableProc;
         extern FuncClose funcClose;
         extern FuncEvent funcEvent;

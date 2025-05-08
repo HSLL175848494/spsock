@@ -376,8 +376,34 @@ namespace HSLL
     {
         if (proc.rdp)
         {
-            controller->setEvent(EPOLLIN);
-            utilTask->append(controller, proc.rdp);
+            if (!controller->readSocket())
+            {
+                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
+                return;
+            }
+
+            if (controller->isPeerClosed() && controller->getReadBufferSize() == 0)
+            {
+                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
+                return;
+            }
+
+            if (markGlobal.readMark == 0)
+            {
+                utilTask->append(controller, proc.rdp);
+                return;
+            }
+
+            if (controller->getReadBufferSize() >= markGlobal.readMark)
+            {
+                utilTask->append(controller, proc.rdp);
+                return;
+            }
+            else
+            {
+                if (!controller->renableEvents())
+                    controller->close();
+            }
         }
         else if (proc.wtp)
         {
@@ -395,8 +421,31 @@ namespace HSLL
     {
         if (proc.wtp)
         {
-            controller->setEvent(EPOLLOUT);
-            utilTask->append(controller, proc.wtp);
+            if (controller->isPeerClosed() && controller->getReadBufferSize() == 0)
+            {
+                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
+                return;
+            }
+            
+            if (markGlobal.writeMark == 0xffffffff)
+            {
+                utilTask->append(controller, proc.wtp);
+                return;
+            }
+
+            if (controller->commitWrite() == -1)
+            HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
+
+            if (controller->getWriteBufferSize() <= markGlobal.writeMark)
+            {
+                utilTask->append(controller, proc.wtp);
+                return;
+            }
+            else
+            {
+                if (!controller->renableEvents())
+                    controller->close();
+            }
         }
         else if (proc.rdp)
         {

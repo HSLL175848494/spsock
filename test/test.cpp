@@ -29,7 +29,7 @@ void echo_read_write_proc(SOCKController *controller)
 
 int main() // g++ -o3  ../*.cpp test.cpp -o test
 {
-    SPSockTcp<ADDRESS_FAMILY_INET>::Config();
+    SPSockTcp<ADDRESS_FAMILY_INET>::Config({16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 20000, 4, 10, 5, LOG_LEVEL_INFO});
 
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();
 
@@ -42,7 +42,6 @@ int main() // g++ -o3  ../*.cpp test.cpp -o test
     if (ins->Listen(4567) == false)
         return -1;
 
-    // ins->SetWaterMark(10,10);
     ins->EventLoop();
     ins->Release();
     return 0;

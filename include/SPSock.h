@@ -76,11 +76,14 @@ namespace HSLL
         bool SetCallback(ConnectProc cnp = nullptr, CloseProc csp = nullptr, ReadProc rdp = nullptr, WriteProc wtp = nullptr);
 
         /**
-         * @brief Configures watermarks and timeout thresholds for read/write event triggering.
-         * @param readMark Minimum number of bytes in the receive buffer to trigger a read event (0 = immediate).
-         * @param writeMark Minimum free space in the send buffer to trigger a write event (0 = immediate).
+         * @brief Configures watermark thresholds for triggering read/write events.
+         * Read events are triggered when the read buffer contains at least readMark bytes of data.
+         * Write events are triggered when the amount of pending data in the write buffer falls below
+         * or equals to writeMark, indicating available space for new data to send.
+         * @param readMark Minimum number of bytes required in the read buffer to trigger a read event (0 = trigger immediately).
+         * @param writeMark Maximum allowed pending data in the write buffer to trigger a write event (0xffffffff = trigger immediately).
          */
-        void SetWaterMark(unsigned int readMark = 0, unsigned int writeMark = 0);
+        void SetWaterMark(unsigned int readMark = 0, unsigned int writeMark = 0xffffffff);
 
         /**
          * @brief Configures exit signal handling

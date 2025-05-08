@@ -243,11 +243,6 @@ namespace HSLL
         return ret;
     }
     
-    void SOCKController::setEvent(int event)
-    {
-        this->event = event;
-    }
-
     void SOCKController::close()
     {
         DEFER::funcClose(this);
