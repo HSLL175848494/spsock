@@ -19,91 +19,85 @@ namespace HSLL
     {
     public:
         /**
-         * @brief Initialize global configuration parameters
-         * @param config Reference to the configuration parameters
-         * @note Must be called before creating any instance to ensure proper initialization
+         * @brief Configures global runtime parameters
+         * @param config Configuration structure with tuning parameters
+         * @note Must be called before instance creation
          */
-        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_WARNING});
+        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 10, 5, 0.6, LOG_LEVEL_WARNING});
 
         /**
-         * @brief Gets singleton instance
-         * @note Not thread-safe
-         * @return Pointer to the singleton instance
+         * @brief Gets singleton instance reference
+         * @return Pointer to singleton instance
+         * @note Initializes instance on first call
          */
         static SPSockTcp *GetInstance();
 
         /**
          * @brief Starts listening on specified port
-         * @param port Port number to listen on
-         * @return true on success, false on failure
-         * @note One-time call function
+         * @param port Network port to bind
+         * @return true if listen succeeded, false on error
+         * @note One-time call during initialization
          */
         bool Listen(unsigned short port) SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Main event processing loop
-         * @return true on success, false on failure
-         * @note One-time call function
+         * @brief Enters main event processing loop
+         * @return true if loop completed normally, false on error
+         * @note Blocks until shutdown signal received
          */
         bool EventLoop() SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Configures linger options
+         * @brief Configures socket linger options
          * @param enable Enable/disable lingering
-         * @param waitSeconds Linger timeout (ignored if disabled)
-         * @return true on success, false on failure
+         * @param waitSeconds Timeout for pending data send
+         * @return true if configuration succeeded
          */
         bool EnableLinger(bool enable, int waitSeconds = 5);
 
         /**
-         * @brief Configures TCP keep-alive options
+         * @brief Configures TCP keep-alive parameters
          * @param enable Enable/disable keep-alive
          * @param aliveSeconds Idle time before probes
-         * @param detectTimes Number of probes
-         * @param detectInterval Interval between probes
-         * @return true on success, false on failure
+         * @param detectTimes Unacknowledged probe limit
+         * @param detectInterval Seconds between probes
+         * @return true if configuration succeeded
          */
         bool EnableKeepAlive(bool enable, int aliveSeconds = 120, int detectTimes = 3, int detectInterval = 10);
 
         /**
-         * @brief Sets user-defined callbacks
-         * @param cnp New connection callback
-         * @param csp Close event callback
-         * @param rdp Read event callback
-         * @param wtp Write event callback
-         * @return true on success, false on failure
+         * @brief Registers user-defined event callbacks
+         * @param cnp New connection callback (optional)
+         * @param csp Connection close callback (optional)
+         * @param rdp Data receive callback (optional)
+         * @param wtp Write ready callback (optional)
+         * @return false if all null, true otherwise
          */
         bool SetCallback(ConnectProc cnp = nullptr, CloseProc csp = nullptr, ReadProc rdp = nullptr, WriteProc wtp = nullptr);
 
         /**
-         * @brief Configures watermark thresholds for triggering read/write events.
-         * Read events are triggered when the read buffer contains at least readMark bytes of data.
-         * Write events are triggered when the amount of pending data in the write buffer falls below
-         * or equals to writeMark, indicating available space for new data to send.
-         * @param readMark Minimum number of bytes required in the read buffer to trigger a read event (0 = trigger immediately).
-         * @param writeMark Maximum allowed pending data in the write buffer to trigger a write event (0xffffffff = trigger immediately).
+         * @brief Sets buffer thresholds for event triggering
+         * @param readMark Minimum bytes to trigger read callback
+         * @param writeMark Maximum buffered bytes to trigger write callback
          */
         void SetWaterMark(unsigned int readMark = 0, unsigned int writeMark = 0xffffffff);
 
         /**
-         * @brief Configures exit signal handling
-         * @param sg Signal number to handle
-         * @param etp Event loop exit callback
-         * @param ctx Context for exit callback
-         * @return true on success, false on failure
-         * @note All connections are closed when exiting via a signal.
-         * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
+         * @brief Registers signal handler for graceful shutdown
+         * @param sg Signal number to handle (e.g., SIGINT)
+         * @return true if signal handler registered
          */
-        bool SetSignalExit(int sg, ExitProc etp = nullptr, void *ctx = nullptr);
+        bool SetSignalExit(int sg) SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Signals event loop to exit
-         * @note Should be called after starting event loop
+         * @brief Signals event loops to terminate
+         * @note Non-blocking call to initiate shutdown
          */
         static void SetExitFlag();
 
         /**
          * @brief Releases singleton resources
+         * @note Closes sockets and deletes instance
          */
         static void Release();
     };
@@ -117,70 +111,65 @@ namespace HSLL
     {
     public:
         /**
-         * @brief Configures minimum logging level
+         * @brief Configures minimum logging severity
          * @param minlevel Minimum log level to output
          */
         static void Config(LOG_LEVEL minlevel = LOG_LEVEL_WARNING);
 
         /**
-         * @brief Gets singleton instance
-         * @note Not thread-safe
-         * @return Pointer to the singleton instance
+         * @brief Gets singleton instance reference
+         * @return Pointer to singleton instance
          */
         static SPSockUdp *GetInstance();
 
         /**
-         * @brief Binds socket to a specified port
-         * @param port Port number to bind to
-         * @return true on success, false on failure
-         * @note One-time call function
+         * @brief Binds socket to network port
+         * @param port Network port to bind
+         * @return true if bind succeeded, false on error
+         * @note One-time call during initialization
          */
         bool Bind(unsigned short port) SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Main event processing loop for UDP
-         * @return true on success, false on failure
-         * @note One-time call function
+         * @brief Enters datagram processing loop
+         * @return true if loop completed normally
+         * @note Blocks until shutdown signal received
          */
         bool EventLoop() SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Sends data to a specified IP and port
-         * @param data Data buffer to send
-         * @param size Size of data to send
+         * @brief Sends datagram to specified endpoint
+         * @param data Buffer containing payload
+         * @param size Payload size in bytes
          * @param ip Destination IP address
          * @param port Destination port number
-         * @return true on success, false on failure
+         * @return true if send succeeded
          */
         bool SendTo(const void *data, size_t size, const char *ip, unsigned short port);
 
         /**
-         * @brief Configures exit signal handling
+         * @brief Registers signal handler for shutdown
          * @param sg Signal number to handle
-         * @param etp Event loop exit callback
-         * @param ctx Context for exit callback
-         * @return true on success, false on failure
-         * @note All connections are closed when exiting via a signal.
-         * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
+         * @return true if handler registered successfully
          */
-        bool SetSignalExit(int sg, ExitProc etp = nullptr, void *ctx = nullptr);
+        bool SetSignalExit(int sg);
 
         /**
-         * @brief Sets receive callback
-         * @param rcp Receive event callback
-         * @param ctx User-defined context (optional)
-         * @return true on success, false on failure
+         * @brief Registers receive callback
+         * @param rcp Datagram receive handler
+         * @param ctx User context pointer (optional)
+         * @return false if null callback, true otherwise
          */
         bool SetCallback(RecvProc rcp, void *ctx = nullptr);
 
         /**
-         * @brief Signals event loop to exit
-         * @note Should be called after starting event loop
+         * @brief Signals event loop to terminate
          */
         static void SetExitFlag();
 
         /**
          * @brief Releases singleton resources
+         * @note Closes socket and deletes instance
          */
         static void Release();
     };

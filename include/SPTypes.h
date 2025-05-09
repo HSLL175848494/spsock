@@ -24,8 +24,6 @@ namespace HSLL
     /// Callback function type for connection close events
     typedef void (*CloseProc)(SOCKController *controller);
     /// Callback function type for event loop exit events
-    typedef void (*ExitProc)(void *ctx);
-    ///< Recieve event callback type
     typedef void (*RecvProc)(void *ctx, const char *data, ssize_t size, const char *ip, unsigned short port);
 
     /**
@@ -78,14 +76,14 @@ namespace HSLL
         ///< Maximum number of tasks in thread pool queue (range: 1-1048576)
         int THREADPOOL_QUEUE_LENGTH;
 
-        ///< Default threads count when system cores undetectable (range: 1-1024)
-        int THREADPOOL_DEFAULT_THREADS_NUM;
-
         ///< Batch size for submitting tasks to thread pool (must < THREADPOOL_QUEUE_LENGTH)
         int THREADPOOL_BATCH_SIZE_SUBMIT;
 
         ///< Batch size for processing tasks in thread pool (range: 1-1024)
         int THREADPOOL_BATCH_SIZE_PROCESS;
+
+        ///< Weight ratio for worker threads vs IO threads (range: 0.0 < ratio < 1.0)
+        float WORKER_THREAD_RATIO;
 
         ///< Minimum log printing level (valid LOG_LEVEL enum values)
         LOG_LEVEL MIN_LOG_LEVEL;

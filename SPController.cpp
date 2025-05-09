@@ -4,7 +4,7 @@
 namespace HSLL
 {
     // SOCKController Implementation
-    bool SOCKController::init(int fd, void *ctx)
+    bool SOCKController::init(int fd, void *ctx, IOThreadInfo *info)
     {
         if (!readBuf.Init())
             return false;
@@ -13,6 +13,7 @@ namespace HSLL
             return false;
 
         this->fd = fd;
+        this->info = info;
         this->ctx = ctx;
         this->events = configGlobal.EPOLL_DEFAULT_EVENT;
         peerClosed = false;
@@ -222,7 +223,7 @@ namespace HSLL
 
     bool SOCKController::enableEvents(bool read, bool write)
     {
-        bool ret = DEFER::funcEvent(fd, read, write);
+        bool ret = DEFER::funcEvent(this, read, write);
         events = 0;
         if (ret)
         {
@@ -237,12 +238,12 @@ namespace HSLL
 
     bool SOCKController::renableEvents()
     {
-        bool ret = DEFER::funcEvent(fd, events & EPOLLIN, events & EPOLLOUT);
+        bool ret = DEFER::funcEvent(this, events & EPOLLIN, events & EPOLLOUT);
         if (!ret)
             events = 0;
         return ret;
     }
-    
+
     void SOCKController::close()
     {
         DEFER::funcClose(this);

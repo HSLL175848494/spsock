@@ -4,6 +4,7 @@
 #include <list>
 #include <mutex>
 #include <string.h>
+#include <thread>
 #include <sys/types.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
@@ -31,8 +32,6 @@ namespace HSLL
     typedef void *(*ConnectProc)(const char *ip, unsigned short port);
     /// Callback function type for connection close events
     typedef void (*CloseProc)(SOCKController *controller);
-    /// Callback function type for event loop exit events
-    typedef void (*ExitProc)(void *ctx);
     ///< Recieve event callback type
     typedef void (*RecvProc)(void *ctx, const char *data, ssize_t size, const char *ip, unsigned short port);
     /// Task processing function type for thread pool
@@ -42,7 +41,7 @@ namespace HSLL
     ///< File descriptor close callback function type
     typedef void (*FuncClose)(SOCKController *controller);
     ///< Socket event control function type
-    typedef bool (*FuncEvent)(int fd, bool read, bool write);
+    typedef bool (*FuncEvent)(SOCKController *, bool read, bool write);
 
     /**
      * @brief Protocol types for socket creation
@@ -117,6 +116,16 @@ namespace HSLL
     };
 
     /**
+     * @brief Structure containing information for I/O event loop threads
+     */
+    struct IOThreadInfo
+    {
+        int count;   ///< Number of active connections being handled by this thread
+        int epollfd; ///< File descriptor for the epoll instance monitoring connections
+        int exitfd;  ///< Event file descriptor used for thread termination signaling
+    };
+
+    /**
      * @brief Thread-safe connection close list
      * @details Used to safely manage connection closures across multiple threads
      */
@@ -156,14 +165,14 @@ namespace HSLL
         ///< Maximum number of tasks in thread pool queue (range: 1-1048576)
         int THREADPOOL_QUEUE_LENGTH;
 
-        ///< Default threads count when system cores undetectable (range: 1-1024)
-        int THREADPOOL_DEFAULT_THREADS_NUM;
-
         ///< Batch size for submitting tasks to thread pool (must < THREADPOOL_QUEUE_LENGTH)
         int THREADPOOL_BATCH_SIZE_SUBMIT;
 
         ///< Batch size for processing tasks in thread pool (range: 1-1024)
         int THREADPOOL_BATCH_SIZE_PROCESS;
+
+        ///< Weight ratio for worker threads vs IO threads (range: 0.0 < ratio < 1.0)
+        float WORKER_THREAD_RATIO;
 
         ///< Minimum log printing level (valid LOG_LEVEL enum values)
         LOG_LEVEL MIN_LOG_LEVEL;

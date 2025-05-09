@@ -48,7 +48,7 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    void SPSockTcp<address_family>::HandleConnect()
+    void SPSockTcp<address_family>::HandleConnect(int idlefd)
     {
         using SOCKADDR = SOCKADDR_IN<address_family>;
         typename SOCKADDR::TYPE addr;
@@ -89,16 +89,6 @@ namespace HSLL
             return;
         }
 
-        epoll_event event;
-        event.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLONESHOT | configGlobal.EPOLL_DEFAULT_EVENT;
-        event.data.fd = fd;
-        if (epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event) != 0)
-        {
-            HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_ctl(EPOLL_CTL_ADD) failed: ", strerror(errno));
-            close(fd);
-            return;
-        }
-
         auto [it, success] = connections.emplace(fd, SOCKController{});
         if (!success)
         {
@@ -123,13 +113,33 @@ namespace HSLL
         if (proc.cnp)
             ctx = proc.cnp(controller.ip, controller.port);
 
-        if (!controller.init(fd, ctx))
+        IOThreadInfo *info = &loopInfo[0];
+
+        for (int i = 1; i < loopInfo.size(); i++)
         {
-            HSLL_LOGINFO(LOG_LEVEL_WARNING, "Insufficient memory space");
-            CloseConnection(fd);
+            if (loopInfo[i].count < info->count)
+                info = &loopInfo[i];
         }
 
-        HSLL_LOGINFO(LOG_LEVEL_INFO, "Accepted new connection from: ", controller.ipPort);
+        if (!controller.init(fd, ctx, info))
+        {
+            HSLL_LOGINFO(LOG_LEVEL_WARNING, "Insufficient memory space");
+            CloseConnection(&controller);
+        }
+        else
+        {
+            epoll_event event;
+            event.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLONESHOT | configGlobal.EPOLL_DEFAULT_EVENT;
+            event.data.fd = fd;
+            if (epoll_ctl(info->epollfd, EPOLL_CTL_ADD, fd, &event) != 0)
+            {
+                HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_ctl(EPOLL_CTL_ADD) failed: ", strerror(errno));
+                CloseConnection(&controller);
+                return;
+            }
+            info->count++;
+            HSLL_LOGINFO(LOG_LEVEL_INFO, "Accepted new connection from: ", controller.ipPort);
+        }
     }
 
     template <ADDRESS_FAMILY address_family>
@@ -137,28 +147,26 @@ namespace HSLL
     {
         if (SPSockTcp<address_family>::exitFlag)
         {
+            SPSockTcp<address_family>::exitFlag.store(false, std::memory_order_release);
             HSLL_LOGINFO_NOPREFIX(LOG_LEVEL_CRUCIAL, "")
             HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Caught signal ", sg, ", exiting event loop");
-            if (SPSockTcp<address_family>::exitProc)
-                SPSockTcp<address_family>::exitProc(SPSockTcp<address_family>::exitCtx);
-            SPSockTcp<address_family>::exitFlag.store(false, std::memory_order_release);
         }
     }
 
     template <ADDRESS_FAMILY address_family>
     void SPSockTcp<address_family>::ActiveClose(SOCKController *controller)
     {
+        epoll_ctl(controller->info->epollfd, EPOLL_CTL_DEL, controller->fd, nullptr);
         auto This = GetInstance();
         std::lock_guard<std::mutex> lock(This->cList.mtx);
         This->cList.connections.push_back(controller);
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockTcp<address_family>::EnableEvent(int fd, bool read, bool write)
+    bool SPSockTcp<address_family>::EnableEvent(SOCKController *controller, bool read, bool write)
     {
-        auto This = GetInstance();
         epoll_event event;
-        event.data.fd = fd;
+        event.data.fd = controller->fd;
         event.events = EPOLLERR | EPOLLRDHUP | EPOLLHUP | EPOLLONESHOT;
 
         if (read)
@@ -167,36 +175,15 @@ namespace HSLL
         if (write)
             event.events |= EPOLLOUT;
 
-        if (epoll_ctl(This->epollfd, EPOLL_CTL_MOD, fd, &event) != 0)
+        if (epoll_ctl(controller->info->epollfd, EPOLL_CTL_MOD, controller->fd, &event) != 0)
             return false;
 
         return true;
     }
 
     template <ADDRESS_FAMILY address_family>
-    std::string SPSockTcp<address_family>::CloseConnection(int fd)
-    {
-        if (epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, nullptr) != 0)
-            HSLL_LOGINFO(LOG_LEVEL_WARNING, "epoll_ctl(EPOLL_CTL_DEL) failed: ", strerror(errno));
-
-        auto it = connections.find(fd);
-        auto &controller = it->second;
-        std::string info = std::move(controller.ipPort);
-
-        if (proc.csp)
-            proc.csp(&controller);
-
-        connections.erase(it);
-        close(fd);
-        return info;
-    }
-
-    template <ADDRESS_FAMILY address_family>
     std::string SPSockTcp<address_family>::CloseConnection(SOCKController *controller)
     {
-        if (epoll_ctl(epollfd, EPOLL_CTL_DEL, controller->fd, nullptr) != 0)
-            HSLL_LOGINFO(LOG_LEVEL_WARNING, "epoll_ctl(EPOLL_CTL_DEL) failed: ", strerror(errno));
-
         std::string info = std::move(controller->ipPort);
 
         if (proc.csp)
@@ -208,30 +195,197 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
+    bool SPSockTcp<address_family>::CalculateOptimalThreadCounts(int *ioThreads, int *workerThreads)
+    {
+        unsigned int hardware_threads = std::thread::hardware_concurrency();
+        if (hardware_threads == 0)
+            return false;
+
+        if (hardware_threads <= 2)
+        {
+            *workerThreads = 1;
+            *ioThreads = 1;
+        }
+        else
+        {
+            float weight = configGlobal.WORKER_THREAD_RATIO;
+            *workerThreads = hardware_threads * weight + 0.5;
+            *ioThreads = hardware_threads - *workerThreads;
+
+            if (*workerThreads == 0)
+            {
+                (*workerThreads)++;
+                (*ioThreads)--;
+            }
+            else if (*ioThreads == 0)
+            {
+                (*workerThreads)--;
+                (*ioThreads)++;
+            }
+        }
+        return true;
+    }
+
+    template <ADDRESS_FAMILY address_family>
+    bool SPSockTcp<address_family>::CreateIOEventLoop(ThreadPool<SockTask> *pool, int num)
+    {
+        for (int i = 0; i < num; i++)
+        {
+            int epollfd, exitfd;
+
+            if ((epollfd = epoll_create1(0)) == -1)
+                break;
+
+            if ((exitfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)) == -1)
+            {
+                close(epollfd);
+                break;
+            }
+
+            epoll_event event;
+            event.data.fd = exitfd;
+            event.events = EPOLLIN | EPOLLERR | EPOLLHUP;
+            if (epoll_ctl(epollfd, EPOLL_CTL_ADD, exitfd, &event) != 0)
+            {
+                close(epollfd);
+                close(exitfd);
+                break;
+            }
+
+            loopInfo.push_back({0, epollfd, exitfd});
+        }
+
+        if (loopInfo.size() != num)
+        {
+            for (int i = 0; i < loopInfo.size(); i++)
+            {
+                close(loopInfo.at(i).epollfd);
+                close(loopInfo.at(i).exitfd);
+            }
+            return false;
+        }
+
+        for (int i = 0; i < num; i++)
+            loops.emplace_back(std::thread{&SPSockTcp<address_family>::IOEventLoop, this, pool, loopInfo.at(i).epollfd, loopInfo.at(i).exitfd});
+
+        return true;
+    }
+
+    template <ADDRESS_FAMILY address_family>
+    void SPSockTcp<address_family>::MainEventLoop()
+    {
+        int idlefd, epollfd;
+
+        if ((idlefd = ::open("/dev/null", O_RDONLY | O_CLOEXEC)) == -1)
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "open \"/dev/null\" error");
+            return;
+        }
+
+        if ((epollfd = epoll_create1(0)) == -1)
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_create1() failed: ", strerror(errno));
+            close(idlefd);
+            return;
+        }
+
+        epoll_event event;
+        event.data.fd = listenfd;
+        event.events = EPOLLIN | EPOLLERR | EPOLLHUP;
+        if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &event) != 0)
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_ctl(EPOLL_CTL_ADD) failed: ", strerror(errno));
+            close(idlefd);
+            close(epollfd);
+            return;
+        }
+
+        epoll_event events[1];
+        while (exitFlag.load(std::memory_order_acquire))
+        {
+            int nfds = epoll_wait(epollfd, events, 1, 50);
+            if (nfds == -1)
+            {
+                if (errno == EINTR)
+                    continue;
+
+                break;
+            }
+
+            HandleCloseList();
+
+            if (nfds)
+                HandleConnect(idlefd);
+        }
+
+        close(idlefd);
+        close(epollfd);
+    }
+
+    template <ADDRESS_FAMILY address_family>
+    void SPSockTcp<address_family>::IOEventLoop(ThreadPool<SockTask> *pool, int epollfd, int exitfd)
+    {
+        UtilTask utilTask(pool);
+        epoll_event *events = new epoll_event[configGlobal.EPOLL_MAX_EVENT_BSIZE];
+
+        while (true)
+        {
+            int nfds = epoll_wait(epollfd, events, configGlobal.EPOLL_MAX_EVENT_BSIZE, configGlobal.EPOLL_TIMEOUT_MILLISECONDS);
+            if (nfds == -1)
+            {
+                if (errno == EINTR)
+                    continue;
+
+                break;
+            }
+
+            for (int i = 0; i < nfds; i++)
+            {
+                int fd = events[i].data.fd;
+
+                if (fd == exitfd)
+                {
+                    delete[] events;
+                    return;
+                }
+
+                if (events[i].events & (EPOLLHUP | EPOLLERR))
+                {
+                    ActiveClose(&connections.find(fd)->second);
+                }
+                else if (events[i].events & (EPOLLIN | EPOLLRDHUP))
+                {
+                    auto it = connections.find(fd);
+
+                    if (events[i].events & EPOLLRDHUP)
+                        it->second.peerClosed = true;
+
+                    if (!HandleRead(&it->second, &utilTask))
+                        ActiveClose(&it->second);
+                }
+                else if (events[i].events & EPOLLOUT)
+                {
+                    auto it = connections.find(fd);
+
+                    if (!HandleWrite(&it->second, &utilTask))
+                        ActiveClose(&it->second);
+                }
+            }
+
+            utilTask.reset();
+        }
+        delete[] events;
+    }
+
+    template <ADDRESS_FAMILY address_family>
     void SPSockTcp<address_family>::Clean()
     {
         if (listenfd != -1)
             close(listenfd);
-
-        if ((status & 0x8) == 0x8)
-        {
-            for (auto &it : connections)
-            {
-                if (proc.csp)
-                    proc.csp(&it.second);
-
-                close(it.first);
-                HSLL_LOGINFO(LOG_LEVEL_INFO, "Closed connection: ", it.second.ipPort);
-            }
-
-            close(idlefd);
-            close(epollfd);
-            connections.clear();
-        }
     }
 
     template <ADDRESS_FAMILY address_family>
-    SPSockTcp<address_family>::SPSockTcp() : epollfd(-1), listenfd(-1), idlefd(-1), status(0), lin{0, 0}, alive{0, 0, 0, 0} {};
+    SPSockTcp<address_family>::SPSockTcp() : listenfd(-1), status(0), lin{0, 0}, alive{0, 0, 0, 0} {};
 
     template <ADDRESS_FAMILY address_family>
     void SPSockTcp<address_family>::Config(SPConfig config)
@@ -244,9 +398,10 @@ namespace HSLL
         assert(config.EPOLL_TIMEOUT_MILLISECONDS >= -1);
         assert((config.EPOLL_DEFAULT_EVENT & ~(EPOLLIN | EPOLLOUT)) == 0);
         assert(config.THREADPOOL_QUEUE_LENGTH > 0 && config.THREADPOOL_QUEUE_LENGTH <= 1048576);
-        assert(config.THREADPOOL_DEFAULT_THREADS_NUM > 0 && config.THREADPOOL_DEFAULT_THREADS_NUM <= 1024);
         assert(config.THREADPOOL_BATCH_SIZE_SUBMIT > 0 && config.THREADPOOL_BATCH_SIZE_SUBMIT <= config.THREADPOOL_QUEUE_LENGTH);
         assert(config.THREADPOOL_BATCH_SIZE_PROCESS > 0 && config.THREADPOOL_BATCH_SIZE_PROCESS <= 1024);
+        assert(config.WORKER_THREAD_RATIO > 0.0 && config.WORKER_THREAD_RATIO < 1.0);
+
         funcClose = ActiveClose;
         funcEvent = EnableEvent;
         configGlobal = config;
@@ -312,183 +467,107 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockTcp<address_family>::Prepare(epoll_event *events, ThreadPool<SockTask> *pool)
-    {
-        if ((idlefd = ::open("/dev/null", O_RDONLY | O_CLOEXEC)) == -1)
-        {
-            HSLL_LOGINFO(LOG_LEVEL_ERROR, "open \"/dev/null\" error");
-            return false;
-        }
-
-        if ((epollfd = epoll_create1(0)) == -1)
-        {
-            HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_create1() failed: ", strerror(errno));
-            delete[] events;
-            return false;
-        }
-
-        epoll_event event;
-        event.data.fd = listenfd;
-        event.events = EPOLLIN | EPOLLERR | EPOLLHUP;
-        if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &event) != 0)
-        {
-            HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_ctl(EPOLL_CTL_ADD) failed: ", strerror(errno));
-            close(epollfd);
-            epollfd = -1;
-            delete[] events;
-            return false;
-        }
-
-        long cores = sysconf(_SC_NPROCESSORS_ONLN);
-        if (cores == -1)
-        {
-            cores = configGlobal.THREADPOOL_DEFAULT_THREADS_NUM;
-            HSLL_LOGINFO(LOG_LEVEL_WARNING, "Failed to get the number of CPU cores, set to default: ", cores);
-        }
-
-        if (!pool->init(configGlobal.THREADPOOL_QUEUE_LENGTH, cores,
-                        configGlobal.THREADPOOL_BATCH_SIZE_PROCESS))
-        {
-            close(epollfd);
-            epollfd = -1;
-            delete[] events;
-            HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to initialize thread pool: There is not enough memory space");
-            return false;
-        }
-
-        return true;
-    }
-
-    template <ADDRESS_FAMILY address_family>
     void SPSockTcp<address_family>::HandleCloseList()
     {
-        std::lock_guard<std::mutex> lock(cList.mtx);
-        while (!cList.connections.empty())
+        std::unique_lock<std::mutex> lock(cList.mtx);
+        if (cList.connections.size() > 10)
         {
-            auto controller = cList.connections.front();
-            cList.connections.pop_front();
-            HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller));
+            auto connections = std::move(cList.connections);
+            lock.unlock();
+
+            for (auto &&controller : connections)
+            {
+                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller));
+                controller->info->count--;
+            }
+        }
+        else
+        {
+            for (auto &&controller : cList.connections)
+            {
+                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller));
+                controller->info->count--;
+            }
+            cList.connections.clear();
         }
     }
 
     template <ADDRESS_FAMILY address_family>
-    void SPSockTcp<address_family>::HandleRead(SOCKController *controller, UtilTask *utilTask)
+    bool SPSockTcp<address_family>::HandleRead(SOCKController *controller, UtilTask *utilTask)
     {
         if (proc.rdp)
         {
             if (!controller->readSocket())
-            {
-                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
-                return;
-            }
+                return false;
 
             if (controller->isPeerClosed() && controller->getReadBufferSize() == 0)
-            {
-                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
-                return;
-            }
+                return false;
 
             if (markGlobal.readMark == 0)
             {
                 utilTask->append(controller, proc.rdp);
-                return;
+                return true;
             }
 
             if (controller->getReadBufferSize() >= markGlobal.readMark)
             {
                 utilTask->append(controller, proc.rdp);
-                return;
+                return true;
             }
-            else
+            else if (!controller->renableEvents())
             {
-                if (!controller->renableEvents())
-                    controller->close();
+                return false;
             }
         }
         else if (proc.wtp)
         {
             if (controller->enableEvents(false, true))
-                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
+                return false;
         }
         else
         {
-            HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
+            return false;
         }
+        return true;
     }
 
     template <ADDRESS_FAMILY address_family>
-    void SPSockTcp<address_family>::HandleWrite(SOCKController *controller, UtilTask *utilTask)
+    bool SPSockTcp<address_family>::HandleWrite(SOCKController *controller, UtilTask *utilTask)
     {
         if (proc.wtp)
         {
             if (controller->isPeerClosed() && controller->getReadBufferSize() == 0)
-            {
-                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
-                return;
-            }
-            
+                return false;
+
             if (markGlobal.writeMark == 0xffffffff)
             {
                 utilTask->append(controller, proc.wtp);
-                return;
+                return true;
             }
 
             if (controller->commitWrite() == -1)
-            HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
+                return false;
 
             if (controller->getWriteBufferSize() <= markGlobal.writeMark)
             {
                 utilTask->append(controller, proc.wtp);
-                return;
+                return true;
             }
-            else
+            else if (!controller->renableEvents())
             {
-                if (!controller->renableEvents())
-                    controller->close();
+                return false;
             }
         }
         else if (proc.rdp)
         {
             if (controller->enableEvents(true, false))
-                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
+                return false;
         }
         else
         {
-            HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller->fd));
+            return false;
         }
-    }
-
-    template <ADDRESS_FAMILY address_family>
-    void SPSockTcp<address_family>::HandleEvents(epoll_event *events, int nfds, UtilTask *utilTask)
-    {
-        for (int i = 0; i < nfds; i++)
-        {
-            int fd = events[i].data.fd;
-
-            if (fd == listenfd)
-            {
-                HandleConnect();
-            }
-
-            else if (events[i].events & (EPOLLHUP | EPOLLERR))
-            {
-                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(fd));
-            }
-            else if (events[i].events & (EPOLLIN | EPOLLRDHUP))
-            {
-                auto it = connections.find(fd);
-
-                if (events[i].events & EPOLLRDHUP)
-                    it->second.peerClosed = true;
-
-                HandleRead(&it->second, utilTask);
-            }
-            else if (events[i].events & EPOLLOUT)
-            {
-                auto it = connections.find(fd);
-                HandleWrite(&it->second, utilTask);
-            }
-        }
+        return true;
     }
 
     template <ADDRESS_FAMILY address_family>
@@ -515,37 +594,57 @@ namespace HSLL
         if ((status & 0x4) != 0x4)
             HSLL_LOGINFO(LOG_LEVEL_WARNING, "Exit signal handler not configured");
 
-        epoll_event *events = new epoll_event[configGlobal.EPOLL_MAX_EVENT_BSIZE];
-        ThreadPool<SockTask> pool;
-
-        if (!Prepare(events, &pool))
-            return false;
-
-        UtilTask utilTask(&pool);
-
-        HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop started");
-
-        while (exitFlag.load(std::memory_order_acquire))
+        int ioThreads, workerThreads;
+        if (!CalculateOptimalThreadCounts(&ioThreads, &workerThreads))
         {
-            int nfds = epoll_wait(epollfd, events, configGlobal.EPOLL_MAX_EVENT_BSIZE, configGlobal.EPOLL_TIMEOUT_MILLISECONDS);
-            if (nfds == -1)
-            {
-                if (errno == EINTR)
-                    continue;
-
-                HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_wait() failed: ", strerror(errno));
-                status |= 0x8;
-                delete[] events;
-                return false;
-            }
-
-            HandleCloseList();
-            HandleEvents(events, nfds, &utilTask);
-            utilTask.reset();
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to get the number of CPU cores");
+            return false;
         }
 
+        ThreadPool<SockTask> pool;
+
+        if (!pool.init(configGlobal.THREADPOOL_QUEUE_LENGTH, workerThreads,
+                       configGlobal.THREADPOOL_BATCH_SIZE_PROCESS))
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to initialize thread pool: There is not enough memory space");
+            return false;
+        }
+
+        if (!CreateIOEventLoop(&pool, ioThreads))
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_create1() failed: ", strerror(errno));
+            return false;
+        }
+
+        HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop start");
+
+        MainEventLoop();
+        pool.exit();
+
+        for (int i = 0; i < loops.size(); i++)
+        {
+            uint64_t value = 1;
+            ssize_t bytes=write(loopInfo.at(i).exitfd, &value, sizeof(value));
+        }
+
+        for (int i = 0; i < loops.size(); i++)
+        {
+            loops.at(i).join();
+            close(loopInfo.at(i).epollfd);
+            close(loopInfo.at(i).exitfd);
+        }
+
+        for (auto &it : connections)
+        {
+            if (proc.csp)
+                proc.csp(&it.second);
+
+            close(it.first);
+            HSLL_LOGINFO(LOG_LEVEL_INFO, "Closed connection: ", it.second.ipPort);
+        }
+        connections.clear();
+
         status |= 0x8;
-        delete[] events;
         HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop exited");
         return true;
     }
@@ -612,8 +711,14 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockTcp<address_family>::SetSignalExit(int sg, ExitProc etp, void *ctx)
+    bool SPSockTcp<address_family>::SetSignalExit(int sg)
     {
+        if ((status & 0x4) == 0x4)
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "SetSignalExit() cannot be called multiple times");
+            return false;
+        }
+
         struct sigaction sa;
         sa.sa_handler = HandleExit;
         sigemptyset(&sa.sa_mask);
@@ -624,9 +729,6 @@ namespace HSLL
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "sigaction() failed: ", strerror(errno));
             return false;
         }
-
-        this->exitProc = etp;
-        this->exitCtx = ctx;
 
         status |= 0x4;
         HSLL_LOGINFO(LOG_LEVEL_INFO, "Exit signal handler configured for signal: ", sg);
@@ -845,7 +947,7 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockUdp<address_family>::SetSignalExit(int sg, ExitProc etp, void *ctx)
+    bool SPSockUdp<address_family>::SetSignalExit(int sg)
     {
         struct sigaction sa;
         sa.sa_handler = HandleExit;
@@ -857,9 +959,6 @@ namespace HSLL
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "sigaction() failed: ", strerror(errno));
             return false;
         }
-
-        this->exitProc = etp;
-        this->exitCtx = ctx;
 
         status |= 0x4;
         HSLL_LOGINFO(LOG_LEVEL_INFO, "Exit signal handler configured for signal: ", sg);
@@ -907,18 +1006,6 @@ namespace HSLL
 
     template <ADDRESS_FAMILY address_family>
     std::atomic<bool> SPSockUdp<address_family>::exitFlag = true;
-
-    template <ADDRESS_FAMILY address_family>
-    void *SPSockTcp<address_family>::exitCtx = nullptr;
-
-    template <ADDRESS_FAMILY address_family>
-    void *SPSockUdp<address_family>::exitCtx = nullptr;
-
-    template <ADDRESS_FAMILY address_family>
-    ExitProc SPSockTcp<address_family>::exitProc = nullptr;
-
-    template <ADDRESS_FAMILY address_family>
-    ExitProc SPSockUdp<address_family>::exitProc = nullptr;
 
     template <ADDRESS_FAMILY address_family>
     SPSockTcp<address_family> *SPSockTcp<address_family>::instance = nullptr;

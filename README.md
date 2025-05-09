@@ -163,10 +163,10 @@ int main()
 | EPOLL_TIMEOUT_MILLISECONDS     | epoll等待超时时间（毫秒）                                           | -1: 永久阻塞，0: 非阻塞立即返回，>0: 指定超时时间                       |
 | EPOLL_DEFAULT_EVENT            | 默认epoll事件监听类型                                               | 有效组合：EPOLLIN、EPOLLOUT 或 EPOLLIN\|EPOLLOUT                        |
 | THREADPOOL_QUEUE_LENGTH        | 线程池任务队列最大容量                                              | 1-1048576                                                              |
-| THREADPOOL_DEFAULT_THREADS_NUM | 系统核心数不可用时默认创建的线程数                                  | 1-1024                                                                 |
 | THREADPOOL_BATCH_SIZE_SUBMIT   | 批量提交任务到线程池的批处理大小                                    | < THREADPOOL_QUEUE_LENGTH                                              |
 | THREADPOOL_BATCH_SIZE_PROCESS  | 线程池处理任务的批处理大小                                          | 1-1024                                                                 |
-| MIN_LOG_LEVEL                  | 最低日志输出等级                                                    | 有效枚举值：LOG_LEVEL::DEBUG/INFO/WARNING/ERROR/FATAL                  |
+| WORKER_THREAD_RATIO            | 工作线程与IO线程的权重比                                            | 0.0 < ratio < 1.0                                                      |
+| MIN_LOG_LEVEL                  | 最低日志输出等级                                                    | 有效枚举值：LOG_LEVEL_INFO, LOG_LEVEL_WARNING, LOG_LEVEL_CRUCIAL, LOG_LEVEL_ERROR |
 
 ## 注意事项
 

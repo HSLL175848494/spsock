@@ -26,6 +26,7 @@ namespace HSLL
         bool peerClosed; ///< Whether the peer (remote endpoint) has closed the connection
 
         void *ctx;                 ///< Context pointer for callback functions
+        IOThreadInfo *info;        ///< Context pointer for i/o event loop
         char ip[INET6_ADDRSTRLEN]; ///< IP address string (IPv4 or IPv6)
         unsigned short port;       ///< Port number for the socket connection
         std::string ipPort;        ///< Combined IP:port string for identification
@@ -37,8 +38,9 @@ namespace HSLL
          * @brief Initializes the controller with socket parameters
          * @param fd Socket file descriptor
          * @param ctx Context pointer for callbacks
+         * @param info Context pointer for i/o event loop
          */
-        bool init(int fd, void *ctx);
+        bool init(int fd, void *ctx, IOThreadInfo *info);
 
         /**
          * @brief Reads data from the socket

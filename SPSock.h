@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <assert.h>
+#include <sys/eventfd.h>
 #include <netinet/tcp.h>
 #include <unordered_map>
 
@@ -28,12 +29,12 @@ namespace HSLL
     {
         using TYPE = sockaddr_in; ///< Underlying socket address type
 
-        static unsigned int UDP_MAX_BSIZE; ///< Max buffer size for UDP
+        static unsigned int UDP_MAX_BSIZE; ///< Maximum UDP datagram size including headers
 
         /**
          * @brief Initializes IPv4 socket address structure
-         * @param address Reference to sockaddr_in structure
-         * @param port Network byte order port number
+         * @param address Reference to sockaddr_in structure to initialize
+         * @param port Host byte order port number to convert
          */
         static void INIT(sockaddr_in &address, unsigned short port);
     };
@@ -46,338 +47,327 @@ namespace HSLL
     {
         using TYPE = sockaddr_in6; ///< Underlying socket address type
 
-        static unsigned int UDP_MAX_BSIZE; ///< Max buffer size for UDP
+        static unsigned int UDP_MAX_BSIZE; ///< Maximum UDP datagram size including headers
 
         /**
          * @brief Initializes IPv6 socket address structure
-         * @param address Reference to sockaddr_in6 structure
-         * @param port Network byte order port number
+         * @param address Reference to sockaddr_in6 structure to initialize
+         * @param port Host byte order port number to convert
          */
         static void INIT(sockaddr_in6 &address, unsigned short port);
     };
 
     /**
-     * @brief Main TCP socket management class
+     * @brief TCP socket manager with event-driven architecture
      * @tparam address_family IP version (IPv4/IPv6)
      */
     template <ADDRESS_FAMILY address_family>
     class SPSockTcp : noncopyable
     {
     private:
-        linger lin;                                          ///< Linger configuration
-        SPSockProc proc;                                     ///< User connections callbacks
-        SPSockAlive alive;                                   ///< Keep-alive settings
-        CloseList cList;                                     ///< Connection close list
-        std::unordered_map<int, SOCKController> connections; ///< Active connections
+        linger lin;                                          ///< Linger options configuration
+        SPSockProc proc;                                     ///< User-defined callback functions
+        SPSockAlive alive;                                   ///< Keep-alive parameters
+        CloseList cList;                                     ///< Connections pending closure
+        std::vector<IOThreadInfo> loopInfo;                  ///< IO thread metadata
+        std::vector<std::thread> loops;                      ///< IO event loop threads
+        std::unordered_map<int, SOCKController> connections; ///< Active connections map
 
-        int status;   ///< Internal status flags
-        int idlefd;   ///< Idle file descriptor
-        int epollfd;  ///< Epoll file descriptor
+        int status;   ///< Internal state flags
         int listenfd; ///< Listening socket descriptor
 
-        static void *exitCtx;                       ///< Event loop exit context
-        static ExitProc exitProc;                   ///< Event loop exit procedure
-        static std::atomic<bool> exitFlag;          ///< Event loop control flag
-        static SPSockTcp<address_family> *instance; ///< Singleton instance
+        static std::atomic<bool> exitFlag;          ///< Event loop termination control
+        static SPSockTcp<address_family> *instance; ///< Singleton instance pointer
 
         /**
-         * @brief Configures socket linger options
+         * @brief Configures SO_LINGER socket option
          * @param fd Socket descriptor to configure
          */
         void SetLinger(int fd);
 
         /**
-         * @brief Configures TCP keep-alive options
+         * @brief Configures TCP keep-alive parameters
          * @param fd Socket descriptor to configure
          */
         void SetKeepAlive(int fd);
 
         /**
-         * @brief Actively initiates closure of a connection by adding it to the close list
-         * @param controller Pointer to the connection controller to be closed
-         * @note This is a static member function that operates on the singleton instance
+         * @brief Initiates controlled connection closure
+         * @param controller Connection controller to schedule for closure
+         * @note Adds connection to thread-safe closure list
          */
         static void ActiveClose(SOCKController *controller);
 
         /**
-         * @brief Enables or modifies epoll event monitoring for a file descriptor
-         * @param fd File descriptor to modify
-         * @param read Whether to enable read events (EPOLLIN)
-         * @param write Whether to enable write events (EPOLLOUT)
-         * @return true if event modification succeeded, false otherwise
+         * @brief Modifies epoll event subscriptions
+         * @param controller Connection controller to modify
+         * @param read Enable read events (EPOLLIN)
+         * @param write Enable write events (EPOLLOUT)
+         * @return true if epoll_ctl succeeded, false otherwise
          */
-        static bool EnableEvent(int fd, bool read, bool write);
+        static bool EnableEvent(SOCKController *controller, bool read, bool write);
 
         /**
          * @brief Signal handler for graceful shutdown
-         * @param sg Signal number received
+         * @param sg Received signal number
          */
         static void HandleExit(int sg);
 
         /**
-         * @brief Prepares the epoll instance and thread pool for event processing
-         * @param events Pre-allocated epoll event buffer
-         * @param pool Pointer to the thread pool instance
-         * @return true if preparation succeeded, false otherwise
-         * @note Initializes epoll instance, configures listening socket,
-         *       and sets up worker threads
+         * @brief Accepts new connections and initializes controllers
+         * @param idlefd Reserved file descriptor for EMFILE handling
          */
-        bool Prepare(epoll_event *events, ThreadPool<SockTask> *pool);
+        void HandleConnect(int idlefd);
 
         /**
-         * @brief Handles new incoming connections
-         */
-        void HandleConnect();
-
-        /**
-         * @brief Processes pending connection closures from the close list
-         * @note Safely removes connections marked for closure and releases resources
+         * @brief Processes connections in close list
+         * @note Performs batch closure and resource cleanup
          */
         void HandleCloseList();
 
         /**
-         * @brief Dispatches epoll events to appropriate handlers
-         * @param events Array of epoll events to process
-         * @param nfds Number of ready file descriptors
-         * @param utilTask Utility task manager for operation dispatching
+         * @brief Processes read-ready events
+         * @param controller Connection controller with pending data
+         * @param utilTask Task dispatcher for worker threads
+         * @return false if connection should be closed, true otherwise
          */
-        void HandleEvents(epoll_event *events, int nfds, UtilTask *utilTask);
+        bool HandleRead(SOCKController *controller, UtilTask *utilTask);
 
         /**
-         * @brief Processes read events for a connection
-         * @param controller Connection controller triggering the read event
-         * @param utilTask Utility task manager for dispatching read operations
-         * @note May trigger user-defined read callback or initiate connection closure
+         * @brief Processes write-ready events
+         * @param controller Connection controller with write capacity
+         * @param utilTask Task dispatcher for worker threads
+         * @return false if connection should be closed, true otherwise
          */
-        void HandleRead(SOCKController *controller, UtilTask *utilTask);
+        bool HandleWrite(SOCKController *controller, UtilTask *utilTask);
 
         /**
-         * @brief Processes write events for a connection
-         * @param controller Connection controller triggering the write event
-         * @param utilTask Utility task manager for dispatching write operations
-         * @note May trigger user-defined write callback or initiate connection closure
-         */
-        void HandleWrite(SOCKController *controller, UtilTask *utilTask);
-
-        /**
-         * @brief Closes a connection and cleans up resources
-         * @param fd File descriptor of the connection to close
-         * @return Connection information string (IP:PORT format)
-         */
-        std::string CloseConnection(int fd);
-
-        /**
-         * @brief Closes a connection using its controller pointer
-         * @param controller Pointer to the connection controller to close
-         * @return Connection information string (IP:PORT format)
-         * @note Removes from epoll monitoring and cleans up associated resources
+         * @brief Closes connection and cleans resources
+         * @param controller Connection controller to destroy
+         * @return Formatted IP:PORT string of closed connection
          */
         std::string CloseConnection(SOCKController *controller);
 
         /**
-         * @brief Performs comprehensive cleanup of all network resources
-         * @note Closes all active connections, listening sockets, and epoll instances.
-         *       Called during graceful shutdown or instance destruction.
+         * @brief Calculates optimal IO/worker thread distribution
+         * @param ioThreads Receives calculated IO thread count
+         * @param workerThreads Receives worker thread count
+         * @return true if calculation succeeded, false on error
+         */
+        bool CalculateOptimalThreadCounts(int *ioThreads, int *workerThreads);
+
+        /**
+         * @brief Initializes epoll instances and IO threads
+         * @param pool Worker thread pool reference
+         * @param num Number of IO threads to create
+         * @return true if all resources initialized successfully
+         */
+        bool CreateIOEventLoop(ThreadPool<SockTask> *pool, int num);
+
+        /**
+         * @brief Main acceptor thread event loop
+         * @note Manages listen socket and connection acceptance
+         */
+        void MainEventLoop();
+
+        /**
+         * @brief IO worker thread event processing loop
+         * @param pool Worker thread pool reference
+         * @param epollfd Epoll instance descriptor
+         * @param exitfd Eventfd descriptor for shutdown signaling
+         */
+        void IOEventLoop(ThreadPool<SockTask> *pool, int epollfd, int exitfd);
+
+        /**
+         * @brief Releases all network resources
+         * @note Closes sockets and clears connection maps
          */
         void Clean();
 
         /**
-         * @brief Private constructor
+         * @brief Private constructor for singleton pattern
          */
         SPSockTcp();
 
     public:
         /**
-         * @brief Initialize global configuration parameters
-         * @param config Reference to the configuration parameters
-         * @note Must be called before creating any instance to ensure proper initialization
+         * @brief Configures global runtime parameters
+         * @param config Configuration structure with tuning parameters
+         * @note Must be called before instance creation
          */
-        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 4, 10, 5, LOG_LEVEL_WARNING});
+        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 10, 5, 0.6, LOG_LEVEL_WARNING});
 
         /**
-         * @brief Gets singleton instance
-         * @note Not thread-safe
-         * @return Pointer to the singleton instance
+         * @brief Gets singleton instance reference
+         * @return Pointer to singleton instance
+         * @note Initializes instance on first call
          */
         static SPSockTcp *GetInstance();
 
         /**
          * @brief Starts listening on specified port
-         * @param port Port number to listen on
-         * @return true on success, false on failure
-         * @note One-time call function
+         * @param port Network port to bind
+         * @return true if listen succeeded, false on error
+         * @note One-time call during initialization
          */
         bool Listen(unsigned short port) SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Main event processing loop
-         * @return true on success, false on failure
-         * @note One-time call function
+         * @brief Enters main event processing loop
+         * @return true if loop completed normally, false on error
+         * @note Blocks until shutdown signal received
          */
         bool EventLoop() SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Configures linger options
+         * @brief Configures socket linger options
          * @param enable Enable/disable lingering
-         * @param waitSeconds Linger timeout (ignored if disabled)
-         * @return true on success, false on failure
+         * @param waitSeconds Timeout for pending data send
+         * @return true if configuration succeeded
          */
         bool EnableLinger(bool enable, int waitSeconds = 5);
 
         /**
-         * @brief Configures TCP keep-alive options
+         * @brief Configures TCP keep-alive parameters
          * @param enable Enable/disable keep-alive
          * @param aliveSeconds Idle time before probes
-         * @param detectTimes Number of probes
-         * @param detectInterval Interval between probes
-         * @return true on success, false on failure
+         * @param detectTimes Unacknowledged probe limit
+         * @param detectInterval Seconds between probes
+         * @return true if configuration succeeded
          */
         bool EnableKeepAlive(bool enable, int aliveSeconds = 120, int detectTimes = 3, int detectInterval = 10);
 
         /**
-         * @brief Sets user-defined callbacks
-         * @param cnp New connection callback
-         * @param csp Close event callback
-         * @param rdp Read event callback
-         * @param wtp Write event callback
-         * @return true on success, false on failure
+         * @brief Registers user-defined event callbacks
+         * @param cnp New connection callback (optional)
+         * @param csp Connection close callback (optional)
+         * @param rdp Data receive callback (optional)
+         * @param wtp Write ready callback (optional)
+         * @return false if all null, true otherwise
          */
         bool SetCallback(ConnectProc cnp = nullptr, CloseProc csp = nullptr, ReadProc rdp = nullptr, WriteProc wtp = nullptr);
 
         /**
-         * @brief Configures watermark thresholds for triggering read/write events.
-         * Read events are triggered when the read buffer contains at least readMark bytes of data.
-         * Write events are triggered when the amount of pending data in the write buffer falls below
-         * or equals to writeMark, indicating available space for new data to send.
-         * @param readMark Minimum number of bytes required in the read buffer to trigger a read event (0 = trigger immediately).
-         * @param writeMark Maximum allowed pending data in the write buffer to trigger a write event (0xffffffff = trigger immediately).
+         * @brief Sets buffer thresholds for event triggering
+         * @param readMark Minimum bytes to trigger read callback
+         * @param writeMark Maximum buffered bytes to trigger write callback
          */
         void SetWaterMark(unsigned int readMark = 0, unsigned int writeMark = 0xffffffff);
 
         /**
-         * @brief Configures exit signal handling
-         * @param sg Signal number to handle
-         * @param etp Event loop exit callback
-         * @param ctx Context for exit callback
-         * @return true on success, false on failure
-         * @note All connections are closed when exiting via a signal.
-         * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
+         * @brief Registers signal handler for graceful shutdown
+         * @param sg Signal number to handle (e.g., SIGINT)
+         * @return true if signal handler registered
          */
-        bool SetSignalExit(int sg, ExitProc etp = nullptr, void *ctx = nullptr);
+        bool SetSignalExit(int sg) SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Signals event loop to exit
-         * @note Should be called after starting event loop
+         * @brief Signals event loops to terminate
+         * @note Non-blocking call to initiate shutdown
          */
         static void SetExitFlag();
 
         /**
          * @brief Releases singleton resources
+         * @note Closes sockets and deletes instance
          */
         static void Release();
     };
 
     /**
-     * @brief Main UDP socket management class
+     * @brief UDP socket manager with event-driven architecture
      * @tparam address_family IP version (IPv4/IPv6)
      */
     template <ADDRESS_FAMILY address_family>
     class SPSockUdp : noncopyable
     {
     private:
-        void *ctx;    ///< User-defined context for callbacks
-        RecvProc rcp; ///< Receive event callback
+        void *ctx;    ///< User context for receive callback
+        RecvProc rcp; ///< Datagram receive callback
 
-        int sockfd;          ///< Socket file descriptor
-        unsigned int status; ///< Internal status flags
+        int sockfd;          ///< Bound socket descriptor
+        unsigned int status; ///< Internal state flags
 
-        static void *exitCtx;                       ///< Event loop exit context
-        static ExitProc exitProc;                   ///< Event loop exit procedure
-        static std::atomic<bool> exitFlag;          ///< Event loop control flag
+        static std::atomic<bool> exitFlag;          ///< Event loop control
         static SPSockUdp<address_family> *instance; ///< Singleton instance
 
         /**
-         * @brief Cleans up socket resources
+         * @brief Releases socket resources
          */
         void Clean();
 
         /**
-         * @brief Signal handler for graceful shutdown
-         * @param sg Signal number received
+         * @brief Signal handler for shutdown requests
+         * @param sg Received signal number
          */
         static void HandleExit(int sg);
 
         /**
-         * @brief Private constructor
+         * @brief Private constructor for singleton pattern
          */
         SPSockUdp();
 
     public:
         /**
-         * @brief Configures minimum logging level
+         * @brief Configures minimum logging severity
          * @param minlevel Minimum log level to output
          */
         static void Config(LOG_LEVEL minlevel = LOG_LEVEL_WARNING);
 
         /**
-         * @brief Gets singleton instance
-         * @note Not thread-safe
-         * @return Pointer to the singleton instance
+         * @brief Gets singleton instance reference
+         * @return Pointer to singleton instance
          */
         static SPSockUdp *GetInstance();
 
         /**
-         * @brief Binds socket to a specified port
-         * @param port Port number to bind to
-         * @return true on success, false on failure
-         * @note One-time call function
+         * @brief Binds socket to network port
+         * @param port Network port to bind
+         * @return true if bind succeeded, false on error
+         * @note One-time call during initialization
          */
         bool Bind(unsigned short port) SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Main event processing loop for UDP
-         * @return true on success, false on failure
-         * @note One-time call function
+         * @brief Enters datagram processing loop
+         * @return true if loop completed normally
+         * @note Blocks until shutdown signal received
          */
         bool EventLoop() SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Sends data to a specified IP and port
-         * @param data Data buffer to send
-         * @param size Size of data to send
+         * @brief Sends datagram to specified endpoint
+         * @param data Buffer containing payload
+         * @param size Payload size in bytes
          * @param ip Destination IP address
          * @param port Destination port number
-         * @return true on success, false on failure
+         * @return true if send succeeded
          */
         bool SendTo(const void *data, size_t size, const char *ip, unsigned short port);
 
         /**
-         * @brief Configures exit signal handling
+         * @brief Registers signal handler for shutdown
          * @param sg Signal number to handle
-         * @param etp Event loop exit callback
-         * @param ctx Context for exit callback
-         * @return true on success, false on failure
-         * @note All connections are closed when exiting via a signal.
-         * @note Therefore, you are allowed to call ExitProc before that to clean up the reference to the connection resource
+         * @return true if handler registered successfully
          */
-        bool SetSignalExit(int sg, ExitProc etp = nullptr, void *ctx = nullptr);
+        bool SetSignalExit(int sg);
 
         /**
-         * @brief Sets receive callback
-         * @param rcp Receive event callback
-         * @param ctx User-defined context (optional)
-         * @return true on success, false on failure
+         * @brief Registers receive callback
+         * @param rcp Datagram receive handler
+         * @param ctx User context pointer (optional)
+         * @return false if null callback, true otherwise
          */
         bool SetCallback(RecvProc rcp, void *ctx = nullptr);
 
         /**
-         * @brief Signals event loop to exit
-         * @note Should be called after starting event loop
+         * @brief Signals event loop to terminate
          */
         static void SetExitFlag();
 
         /**
          * @brief Releases singleton resources
+         * @note Closes socket and deletes instance
          */
         static void Release();
     };
