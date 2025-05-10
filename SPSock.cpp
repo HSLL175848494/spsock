@@ -26,9 +26,7 @@ namespace HSLL
     void SPSockTcp<address_family>::SetLinger(int fd)
     {
         if (setsockopt(fd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin)) != 0)
-        {
             HSLL_LOGINFO(LOG_LEVEL_WARNING, "setsockopt(SO_LINGER) failed: ", strerror(errno));
-        }
     }
 
     template <ADDRESS_FAMILY address_family>
@@ -272,6 +270,23 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
+    void SPSockTcp<address_family>::ExitIOEventLoop()
+    {
+        for (int i = 0; i < loops.size(); i++)
+        {
+            uint64_t value = 1;
+            ssize_t bytes = write(loopInfo.at(i).exitfd, &value, sizeof(value));
+        }
+
+        for (int i = 0; i < loops.size(); i++)
+        {
+            loops.at(i).join();
+            close(loopInfo.at(i).epollfd);
+            close(loopInfo.at(i).exitfd);
+        }
+    }
+
+    template <ADDRESS_FAMILY address_family>
     void SPSockTcp<address_family>::MainEventLoop()
     {
         int idlefd, epollfd;
@@ -378,14 +393,31 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    void SPSockTcp<address_family>::Clean()
+    void SPSockTcp<address_family>::Cleanup()
     {
-        if (listenfd != -1)
-            close(listenfd);
+        if (connections.size())
+            HSLL_LOGINFO(LOG_LEVEL_WARNING, "Cleaning up unclosed connections");
+
+        for (auto &it : connections)
+        {
+            if (proc.csp)
+                proc.csp(&it.second);
+
+            close(it.first);
+            HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection force closed : ", it.second.ipPort);
+        }
+        connections.clear();
     }
 
     template <ADDRESS_FAMILY address_family>
-    SPSockTcp<address_family>::SPSockTcp() : listenfd(-1), status(0), lin{0, 0}, alive{0, 0, 0, 0} {};
+    SPSockTcp<address_family>::SPSockTcp() : listenfd(-1), status(0), lin{0, 0}, alive{0, 0, 0, 0} {}
+
+    template <ADDRESS_FAMILY address_family>
+    SPSockTcp<address_family>::~SPSockTcp()
+    {
+        if (listenfd != -1)
+            close(listenfd);
+    };
 
     template <ADDRESS_FAMILY address_family>
     void SPSockTcp<address_family>::Config(SPConfig config)
@@ -620,29 +652,7 @@ namespace HSLL
 
         MainEventLoop();
         pool.exit();
-
-        for (int i = 0; i < loops.size(); i++)
-        {
-            uint64_t value = 1;
-            ssize_t bytes=write(loopInfo.at(i).exitfd, &value, sizeof(value));
-        }
-
-        for (int i = 0; i < loops.size(); i++)
-        {
-            loops.at(i).join();
-            close(loopInfo.at(i).epollfd);
-            close(loopInfo.at(i).exitfd);
-        }
-
-        for (auto &it : connections)
-        {
-            if (proc.csp)
-                proc.csp(&it.second);
-
-            close(it.first);
-            HSLL_LOGINFO(LOG_LEVEL_INFO, "Closed connection: ", it.second.ipPort);
-        }
-        connections.clear();
+        ExitIOEventLoop();
 
         status |= 0x8;
         HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop exited");
@@ -746,21 +756,13 @@ namespace HSLL
     {
         if (instance)
         {
-            instance->Clean();
             delete instance;
             instance = nullptr;
+            HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance released successfully");
         }
-        HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance released successfully");
     }
 
     // UDP Implementation
-    template <ADDRESS_FAMILY address_family>
-    void SPSockUdp<address_family>::Clean()
-    {
-        if (sockfd != -1)
-            close(sockfd);
-    }
-
     template <ADDRESS_FAMILY address_family>
     void SPSockUdp<address_family>::HandleExit(int sg)
     {
@@ -774,6 +776,13 @@ namespace HSLL
 
     template <ADDRESS_FAMILY address_family>
     SPSockUdp<address_family>::SPSockUdp() : sockfd(-1), status(0) {}
+
+    template <ADDRESS_FAMILY address_family>
+    SPSockUdp<address_family>::~SPSockUdp()
+    {
+        if (sockfd != -1)
+            close(sockfd);
+    }
 
     template <ADDRESS_FAMILY address_family>
     void SPSockUdp<address_family>::Config(LOG_LEVEL minlevel)
@@ -992,7 +1001,6 @@ namespace HSLL
     {
         if (instance)
         {
-            instance->Clean();
             delete instance;
             instance = nullptr;
         }

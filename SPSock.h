@@ -65,6 +65,9 @@ namespace HSLL
     class SPSockTcp : noncopyable
     {
     private:
+        int status;   ///< Internal state flags
+        int listenfd; ///< Listening socket descriptor
+
         linger lin;                                          ///< Linger options configuration
         SPSockProc proc;                                     ///< User-defined callback functions
         SPSockAlive alive;                                   ///< Keep-alive parameters
@@ -72,9 +75,6 @@ namespace HSLL
         std::vector<IOThreadInfo> loopInfo;                  ///< IO thread metadata
         std::vector<std::thread> loops;                      ///< IO event loop threads
         std::unordered_map<int, SOCKController> connections; ///< Active connections map
-
-        int status;   ///< Internal state flags
-        int listenfd; ///< Listening socket descriptor
 
         static std::atomic<bool> exitFlag;          ///< Event loop termination control
         static SPSockTcp<address_family> *instance; ///< Singleton instance pointer
@@ -165,6 +165,11 @@ namespace HSLL
         bool CreateIOEventLoop(ThreadPool<SockTask> *pool, int num);
 
         /**
+         * @brief Make the io thread exit and close the corresponding file descriptor
+         */
+        void ExitIOEventLoop();
+
+        /**
          * @brief Main acceptor thread event loop
          * @note Manages listen socket and connection acceptance
          */
@@ -182,12 +187,17 @@ namespace HSLL
          * @brief Releases all network resources
          * @note Closes sockets and clears connection maps
          */
-        void Clean();
+        void Cleanup();
 
         /**
          * @brief Private constructor for singleton pattern
          */
         SPSockTcp();
+
+        /**
+         * @brief Private destructor for singleton pattern
+         */
+        ~SPSockTcp();
 
     public:
         /**
@@ -282,19 +292,14 @@ namespace HSLL
     class SPSockUdp : noncopyable
     {
     private:
-        void *ctx;    ///< User context for receive callback
-        RecvProc rcp; ///< Datagram receive callback
-
         int sockfd;          ///< Bound socket descriptor
         unsigned int status; ///< Internal state flags
 
+        void *ctx;    ///< User context for receive callback
+        RecvProc rcp; ///< Datagram receive callback
+
         static std::atomic<bool> exitFlag;          ///< Event loop control
         static SPSockUdp<address_family> *instance; ///< Singleton instance
-
-        /**
-         * @brief Releases socket resources
-         */
-        void Clean();
 
         /**
          * @brief Signal handler for shutdown requests
@@ -306,6 +311,11 @@ namespace HSLL
          * @brief Private constructor for singleton pattern
          */
         SPSockUdp();
+
+        /**
+         * @brief Private destructor for singleton pattern
+         */
+        ~SPSockUdp();
 
     public:
         /**
