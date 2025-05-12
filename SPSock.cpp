@@ -758,6 +758,7 @@ namespace HSLL
         {
             delete instance;
             instance = nullptr;
+            SPBufferPool::reset();
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance released successfully");
         }
     }

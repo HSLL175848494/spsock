@@ -1,4 +1,5 @@
 
+#include"MemoryTracer.h"
 #include "../SPSock.h"
 
 using namespace HSLL;
@@ -29,6 +30,8 @@ void echo_read_write_proc(SOCKController *controller)
 
 int main() // g++ -o3  ../*.cpp test.cpp -o test
 {
+    HSLL::TRACING::StartTracing();
+
     SPSockTcp<ADDRESS_FAMILY_INET>::Config({16 * 1024, 32 * 1024, 16, 64, 10000, -1, EPOLLIN, 20000, 10, 5, 0.9, LOG_LEVEL_INFO});
 
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();
@@ -44,5 +47,7 @@ int main() // g++ -o3  ../*.cpp test.cpp -o test
 
     ins->EventLoop();
     ins->Release();
+    
+    std::cout<<HSLL::TRACING::GetAllocSize()<<std::endl;
     return 0;
 }
