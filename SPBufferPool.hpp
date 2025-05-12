@@ -168,14 +168,10 @@ namespace HSLL
         }
 
         /**
-         * @brief Private constructor initializes empty pools
+         * @brief Releases all memory blocks by traversing free lists
+         * Decrements reference counts and frees blocks when count reaches zero
          */
-        SPBufferPool() : rbSize(0), wbSize(0), rBuffers(NULL), wBuffers(NULL) {}
-
-        /**
-         * @brief Destructor cleans up all allocated memory blocks
-         */
-        ~SPBufferPool()
+        void releaseAllBlocks()
         {
             while (rBuffers)
             {
@@ -198,6 +194,19 @@ namespace HSLL
             }
         }
 
+        /**
+         * @brief Private constructor initializes empty pools
+         */
+        SPBufferPool() : rbSize(0), wbSize(0), rBuffers(NULL), wBuffers(NULL) {}
+
+        /**
+         * @brief Destructor cleans up all allocated memory blocks
+         */
+        ~SPBufferPool()
+        {
+            releaseAllBlocks();
+        }
+
     public:
         /**
          * @brief Get a buffer from the appropriate pool
@@ -217,6 +226,20 @@ namespace HSLL
         static void FreeBuffer(void *buf, BUFFER_TYPE type)
         {
             (type == BUFFER_TYPE_READ) ? pool.FreeReadBuffferInner(buf) : pool.FreeWriteBufferInner(buf);
+        }
+
+        /**
+         * @brief Resets the buffer pool to initial state, releasing all allocated memory
+         * @note User must ensure all buffers are returned before calling this method.
+         *       Calling this with outstanding buffers will cause memory corruption.
+         */
+        static void reset()
+        {
+            pool.releaseAllBlocks();
+            pool.rbSize = 0;
+            pool.wbSize = 0;
+            pool.rBuffers = nullptr;
+            pool.wBuffers = nullptr;
         }
     };
 }
