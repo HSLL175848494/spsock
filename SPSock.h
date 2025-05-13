@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <assert.h>
+#include <poll.h>
 #include <sys/eventfd.h>
 #include <netinet/tcp.h>
 #include <unordered_map>
@@ -116,8 +117,9 @@ namespace HSLL
         /**
          * @brief Accepts new connections and initializes controllers
          * @param idlefd Reserved file descriptor for EMFILE handling
+         * @return false if error ocurred, true otherwise
          */
-        void HandleConnect(int idlefd);
+        bool HandleConnect(int idlefd);
 
         /**
          * @brief Processes connections in close list
@@ -144,9 +146,8 @@ namespace HSLL
         /**
          * @brief Closes connection and cleans resources
          * @param controller Connection controller to destroy
-         * @return Formatted IP:PORT string of closed connection
          */
-        std::string CloseConnection(SOCKController *controller);
+        void CloseConnection(SOCKController *controller);
 
         /**
          * @brief Calculates optimal IO/worker thread distribution

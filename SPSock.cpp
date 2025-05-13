@@ -46,7 +46,7 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    void SPSockTcp<address_family>::HandleConnect(int idlefd)
+    bool SPSockTcp<address_family>::HandleConnect(int idlefd)
     {
         using SOCKADDR = SOCKADDR_IN<address_family>;
         typename SOCKADDR::TYPE addr;
@@ -63,7 +63,7 @@ namespace HSLL
                 idlefd = open("/dev/null", O_RDONLY | O_CLOEXEC);
             }
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "accept() failed: ", strerror(errno));
-            return;
+            return false;
         }
 
         if (alive.keepAlive)
@@ -77,14 +77,14 @@ namespace HSLL
         {
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "fcntl(F_GETFL) failed: ", strerror(errno));
             close(fd);
-            return;
+            return true;
         }
 
         if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
         {
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "fcntl(F_SETFL) failed: ", strerror(errno));
             close(fd);
-            return;
+            return true;
         }
 
         auto [it, success] = connections.emplace(fd, SOCKController{});
@@ -92,7 +92,7 @@ namespace HSLL
         {
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to add connection to map");
             close(fd);
-            return;
+            return true;
         }
 
         auto &controller = it->second;
@@ -133,11 +133,12 @@ namespace HSLL
             {
                 HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_ctl(EPOLL_CTL_ADD) failed: ", strerror(errno));
                 CloseConnection(&controller);
-                return;
+                return true;
             }
             info->count++;
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Accepted new connection from: ", controller.ipPort);
         }
+        return true;
     }
 
     template <ADDRESS_FAMILY address_family>
@@ -180,16 +181,13 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    std::string SPSockTcp<address_family>::CloseConnection(SOCKController *controller)
+    void SPSockTcp<address_family>::CloseConnection(SOCKController *controller)
     {
-        std::string info = std::move(controller->ipPort);
-
         if (proc.csp)
             proc.csp(controller);
 
-        connections.erase(controller->fd);
         close(controller->fd);
-        return info;
+        connections.erase(controller->fd);
     }
 
     template <ADDRESS_FAMILY address_family>
@@ -289,37 +287,30 @@ namespace HSLL
     template <ADDRESS_FAMILY address_family>
     void SPSockTcp<address_family>::MainEventLoop()
     {
-        int idlefd, epollfd;
-
+        int idlefd;
         if ((idlefd = ::open("/dev/null", O_RDONLY | O_CLOEXEC)) == -1)
         {
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "open \"/dev/null\" error");
             return;
         }
 
-        if ((epollfd = epoll_create1(0)) == -1)
-        {
-            HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_create1() failed: ", strerror(errno));
-            close(idlefd);
-            return;
-        }
+        pollfd fds[1];
+        fds[0].fd = listenfd;
+        fds[0].events = POLLIN;
 
-        epoll_event event;
-        event.data.fd = listenfd;
-        event.events = EPOLLIN | EPOLLERR | EPOLLHUP;
-        if (epoll_ctl(epollfd, EPOLL_CTL_ADD, listenfd, &event) != 0)
-        {
-            HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_ctl(EPOLL_CTL_ADD) failed: ", strerror(errno));
-            close(idlefd);
-            close(epollfd);
-            return;
-        }
+        auto lastCloseListTime = std::chrono::steady_clock::now();
 
-        epoll_event events[1];
         while (exitFlag.load(std::memory_order_acquire))
         {
-            int nfds = epoll_wait(epollfd, events, 1, 50);
-            if (nfds == -1)
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastCloseListTime);
+
+            int timeout = 50 - elapsed.count();
+            if (timeout < 0)
+                timeout = 0;
+
+            int ret = poll(fds, 1, timeout);
+            if (ret == -1)
             {
                 if (errno == EINTR)
                     continue;
@@ -327,14 +318,20 @@ namespace HSLL
                 break;
             }
 
-            HandleCloseList();
+            now = std::chrono::steady_clock::now();
+            elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastCloseListTime);
+            
+            if (elapsed.count() >= 50)
+            {
+                HandleCloseList();
+                lastCloseListTime = now;
+            }
 
-            if (nfds)
-                HandleConnect(idlefd);
+            if (ret > 0 && (!HandleConnect(idlefd)))
+                break;
         }
 
         close(idlefd);
-        close(epollfd);
     }
 
     template <ADDRESS_FAMILY address_family>
@@ -509,7 +506,8 @@ namespace HSLL
 
             for (auto &&controller : connections)
             {
-                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller));
+                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", controller->ipPort);
+                CloseConnection(controller);
                 controller->info->count--;
             }
         }
@@ -517,7 +515,8 @@ namespace HSLL
         {
             for (auto &&controller : cList.connections)
             {
-                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", CloseConnection(controller));
+                HSLL_LOGINFO(LOG_LEVEL_INFO, "Connection closed: ", controller->ipPort);
+                CloseConnection(controller);
                 controller->info->count--;
             }
             cList.connections.clear();
