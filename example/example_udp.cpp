@@ -2,7 +2,7 @@
 
 using namespace HSLL;
 
-void echo_rcp(void *ctx, const char *data, ssize_t size, const char *ip, unsigned short port)
+void echo_rcp(void *ctx, const char *data, size_t size, const char *ip, unsigned short port)
 {
     auto ins = (SPSockUdp<ADDRESS_FAMILY_INET> *)ctx;
     ins->SendTo(data, size, ip, port);

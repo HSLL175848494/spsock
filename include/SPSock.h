@@ -23,7 +23,7 @@ namespace HSLL
          * @param config Configuration structure with tuning parameters
          * @note Must be called before instance creation
          */
-        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 10, 5, 0.6, LOG_LEVEL_WARNING});
+        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, EPOLLIN, 10000, 10, 5, 0.6, LOG_LEVEL_WARNING});
 
         /**
          * @brief Gets singleton instance reference

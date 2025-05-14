@@ -13,21 +13,21 @@ namespace HSLL
      * @brief Socket read/write task structure for thread pool operations
      * @details Contains the execution context and callback function for socket I/O operations
      */
-    struct SockTask
+    struct SockTaskTcp
     {
         ReadWriteProc proc;  ///< Callback function for read/write operations
         SOCKController *ctx; ///< Socket controller context containing connection state
 
     public:
-        ~SockTask() = default;
-        SockTask() = default;
+        ~SockTaskTcp() = default;
+        SockTaskTcp() = default;
 
         /**
          * @brief Construct a socket task with specific context and handler
          * @param ctx Pointer to socket controller context
          * @param proc Callback function to handle I/O operations
          */
-        SockTask(SOCKController *ctx, ReadWriteProc proc) : ctx(ctx), proc(proc) {};
+        SockTaskTcp(SOCKController *ctx, ReadWriteProc proc) : ctx(ctx), proc(proc) {};
 
         /**
          * @brief Execute the registered callback function
@@ -46,7 +46,7 @@ namespace HSLL
     struct UtilTask_Single : noncopyable
     {
         bool flag = true;           ///< Submission availability flag
-        ThreadPool<SockTask> *pool; ///< Associated thread pool instance
+        ThreadPool<SockTaskTcp> *pool; ///< Associated thread pool instance
 
         /**
          * @brief Add a new task to the thread pool
@@ -59,7 +59,7 @@ namespace HSLL
             if (!flag)
                 renableProc(ctx);
 
-            SockTask task(ctx, proc);
+            SockTaskTcp task(ctx, proc);
             if (!pool->append(task))
             {
                 flag = false;
@@ -78,8 +78,8 @@ namespace HSLL
         unsigned int back = 0;      ///< Circular buffer tail position
         unsigned int front = 0;     ///< Circular buffer head position
         unsigned int size = 0;      ///< Current tasks in buffer
-        SockTask *tasks = nullptr;  ///< Circular buffer storage
-        ThreadPool<SockTask> *pool; ///< Associated thread pool instance
+        SockTaskTcp *tasks = nullptr;  ///< Circular buffer storage
+        ThreadPool<SockTaskTcp> *pool; ///< Associated thread pool instance
 
         ~UtilTask_Multipe()
         {
@@ -97,7 +97,7 @@ namespace HSLL
             if (!flag)
                 renableProc(ctx);
 
-            tasks[front] = SockTask(ctx, proc);
+            tasks[front] = SockTaskTcp(ctx, proc);
             front = (front + 1) % configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT;
             size++;
 
@@ -160,12 +160,14 @@ namespace HSLL
         UtilTask_Multipe tm; ///< Batch task handler
 
     public:
+        UtilTask() = default;
+
         /**
          * @brief Initialize task submission system
          * @param pool Thread pool to use for task execution
          * @note Allocates batch buffer if configured for bulk operations
          */
-        UtilTask(ThreadPool<SockTask> *pool)
+        bool init(ThreadPool<SockTaskTcp> *pool)
         {
             if (configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT == 1)
             {
@@ -174,8 +176,11 @@ namespace HSLL
             else
             {
                 tm.pool = pool;
-                tm.tasks = new SockTask[configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT];
+                tm.tasks = new (std::nothrow) SockTaskTcp[configGlobal.THREADPOOL_BATCH_SIZE_SUBMIT];
+                if (tm.tasks == nullptr)
+                    return false;
             }
+            return true;
         }
 
         /**

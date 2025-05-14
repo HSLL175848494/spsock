@@ -223,7 +223,7 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockTcp<address_family>::CreateIOEventLoop(ThreadPool<SockTask> *pool, int num)
+    bool SPSockTcp<address_family>::CreateIOEventLoop(ThreadPool<SockTaskTcp> *pool, int num)
     {
         for (int i = 0; i < num; i++)
         {
@@ -285,13 +285,13 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    void SPSockTcp<address_family>::MainEventLoop()
+    bool SPSockTcp<address_family>::MainEventLoop()
     {
         int idlefd;
         if ((idlefd = ::open("/dev/null", O_RDONLY | O_CLOEXEC)) == -1)
         {
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "open \"/dev/null\" error");
-            return;
+            return false;
         }
 
         pollfd fds[1];
@@ -315,12 +315,13 @@ namespace HSLL
                 if (errno == EINTR)
                     continue;
 
-                break;
+                close(idlefd);
+                return false;
             }
 
             now = std::chrono::steady_clock::now();
             elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastCloseListTime);
-            
+
             if (elapsed.count() >= 50)
             {
                 HandleCloseList();
@@ -328,26 +329,43 @@ namespace HSLL
             }
 
             if (ret > 0 && (!HandleConnect(idlefd)))
-                break;
+            {
+                close(idlefd);
+                return false;
+            }
         }
 
         close(idlefd);
+        return true;
     }
 
     template <ADDRESS_FAMILY address_family>
-    void SPSockTcp<address_family>::IOEventLoop(ThreadPool<SockTask> *pool, int epollfd, int exitfd)
+    void SPSockTcp<address_family>::IOEventLoop(ThreadPool<SockTaskTcp> *pool, int epollfd, int exitfd)
     {
-        UtilTask utilTask(pool);
-        epoll_event *events = new epoll_event[configGlobal.EPOLL_MAX_EVENT_BSIZE];
+        UtilTask utilTask;
+        if (!utilTask.init(pool))
+        {
+            throw std::bad_alloc();
+            return;
+        }
+
+        epoll_event *events = new (std::nothrow) epoll_event[configGlobal.EPOLL_MAX_EVENT_BSIZE];
+        if (!events)
+        {
+            throw std::bad_alloc();
+            return;
+        }
 
         while (true)
         {
-            int nfds = epoll_wait(epollfd, events, configGlobal.EPOLL_MAX_EVENT_BSIZE, configGlobal.EPOLL_TIMEOUT_MILLISECONDS);
+            int nfds = epoll_wait(epollfd, events, configGlobal.EPOLL_MAX_EVENT_BSIZE, -1);
             if (nfds == -1)
             {
                 if (errno == EINTR)
                     continue;
 
+                delete[] events;
+                throw strerror(errno);
                 break;
             }
 
@@ -386,7 +404,6 @@ namespace HSLL
 
             utilTask.reset();
         }
-        delete[] events;
     }
 
     template <ADDRESS_FAMILY address_family>
@@ -424,7 +441,6 @@ namespace HSLL
         assert(config.BUFFER_POOL_PEER_ALLOC_NUM >= 1 && config.BUFFER_POOL_PEER_ALLOC_NUM <= 1024);
         assert(config.BUFFER_POOL_MIN_BLOCK_NUM >= config.BUFFER_POOL_PEER_ALLOC_NUM);
         assert(config.EPOLL_MAX_EVENT_BSIZE > 0 && config.EPOLL_MAX_EVENT_BSIZE <= 65535);
-        assert(config.EPOLL_TIMEOUT_MILLISECONDS >= -1);
         assert((config.EPOLL_DEFAULT_EVENT & ~(EPOLLIN | EPOLLOUT)) == 0);
         assert(config.THREADPOOL_QUEUE_LENGTH > 0 && config.THREADPOOL_QUEUE_LENGTH <= 1048576);
         assert(config.THREADPOOL_BATCH_SIZE_SUBMIT > 0 && config.THREADPOOL_BATCH_SIZE_SUBMIT <= config.THREADPOOL_QUEUE_LENGTH);
@@ -440,7 +456,7 @@ namespace HSLL
     SPSockTcp<address_family> *SPSockTcp<address_family>::GetInstance()
     {
         if (instance == nullptr)
-            instance = new SPSockTcp;
+            instance = new (std::nothrow) SPSockTcp;
 
         return instance;
     }
@@ -632,7 +648,7 @@ namespace HSLL
             return false;
         }
 
-        ThreadPool<SockTask> pool;
+        ThreadPool<SockTaskTcp> pool;
 
         if (!pool.init(configGlobal.THREADPOOL_QUEUE_LENGTH, workerThreads,
                        configGlobal.THREADPOOL_BATCH_SIZE_PROCESS))
@@ -643,13 +659,15 @@ namespace HSLL
 
         if (!CreateIOEventLoop(&pool, ioThreads))
         {
-            HSLL_LOGINFO(LOG_LEVEL_ERROR, "epoll_create1() failed: ", strerror(errno));
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "CreateIOEventLoop() failed");
             return false;
         }
 
         HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop start");
 
-        MainEventLoop();
+        if (!MainEventLoop())
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "MainEventLoop() failed");
+
         pool.exit();
         ExitIOEventLoop();
 
@@ -794,7 +812,7 @@ namespace HSLL
     SPSockUdp<address_family> *SPSockUdp<address_family>::GetInstance()
     {
         if (instance == nullptr)
-            instance = new SPSockUdp;
+            instance = new (std::nothrow) SPSockUdp;
 
         return instance;
     }

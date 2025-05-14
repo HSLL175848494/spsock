@@ -33,7 +33,7 @@ namespace HSLL
     /// Callback function type for connection close events
     typedef void (*CloseProc)(SOCKController *controller);
     ///< Recieve event callback type
-    typedef void (*RecvProc)(void *ctx, const char *data, ssize_t size, const char *ip, unsigned short port);
+    typedef void (*RecvProc)(void *ctx, const char *data, size_t size, const char *ip, unsigned short port);
     /// Task processing function type for thread pool
     typedef void (*TaskProc)(SOCKController *ctx, ReadWriteProc proc);
     ///< Re-listen for the event function pointer
@@ -156,9 +156,6 @@ namespace HSLL
         ///< Maximum events processed per epoll cycle (range: 1-65535)
         int EPOLL_MAX_EVENT_BSIZE;
 
-        ///< Epoll wait timeout in milliseconds (-1: block indefinitely, 0: non-block, >0: timeout ms)
-        int EPOLL_TIMEOUT_MILLISECONDS;
-
         ///< Default epoll events (valid combinations: EPOLLIN, EPOLLOUT, or EPOLLIN|EPOLLOUT)
         int EPOLL_DEFAULT_EVENT;
 
@@ -171,7 +168,7 @@ namespace HSLL
         ///< Batch size for processing tasks in thread pool (range: 1-1024)
         int THREADPOOL_BATCH_SIZE_PROCESS;
 
-        ///< Weight ratio for worker threads vs IO threads (range: 0.0 < ratio < 1.0)
+        ///< Weight ratio for worker threads (range: 0.0 < ratio < 1.0)
         float WORKER_THREAD_RATIO;
 
         ///< Minimum log printing level (valid LOG_LEVEL enum values)
@@ -185,7 +182,6 @@ namespace HSLL
     namespace DEFER
     {
         class SPDefered;
-
         extern SPConfig configGlobal;
         extern SPWaterMark markGlobal;
         extern REnableProc renableProc;

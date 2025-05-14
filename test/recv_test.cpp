@@ -25,7 +25,7 @@ void echo_read_write_proc(SOCKController *controller)
 
 int main() // g++ -o3  ../*.cpp recv_test.cpp -o test
 {
-    SPSockTcp<ADDRESS_FAMILY_INET>::Config({16 * 1024, 32 * 1024, 16, 64, 10000, -1, EPOLLIN, 20000, 10, 5, 0.9, LOG_LEVEL_INFO});
+    SPSockTcp<ADDRESS_FAMILY_INET>::Config({16 * 1024, 32 * 1024, 16, 64, 10000, EPOLLIN, 20000, 10, 5, 0.9, LOG_LEVEL_INFO});
 
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();
 

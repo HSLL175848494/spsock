@@ -13,22 +13,17 @@ void echo_read_write_proc(SOCKController *controller)
         return;
     }
 
-    if (!controller->write(buf, 1024 * 32))
-    {
+    controller->writeTemp(buf, 1024 * 32);
+
+    if (controller->commitWrite() == -1)
         controller->close();
-    }
-    else
-    {
-        if (controller->commitWrite() == -1)
-            controller->close();
-        else if (!controller->enableEvents(false,true))
-            controller->close();
-    }
+    else if (!controller->enableEvents(false, true))
+        controller->close();
 }
 
 int main() // g++ -o3  ../*.cpp write_test.cpp -o test
 {
-    SPSockTcp<ADDRESS_FAMILY_INET>::Config({16 * 1024, 32 * 1024, 16, 64, 10000, -1, EPOLLOUT, 20000, 10, 5, 0.9, LOG_LEVEL_INFO});
+    SPSockTcp<ADDRESS_FAMILY_INET>::Config({16 * 1024, 32 * 1024, 16, 64, 10000, EPOLLOUT, 20000, 10, 5, 0.9, LOG_LEVEL_INFO});
 
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();
 
@@ -44,7 +39,7 @@ int main() // g++ -o3  ../*.cpp write_test.cpp -o test
     if (ins->Listen(4567) == false)
         return -1;
 
-    ins->SetWaterMark(0,4096);
+    ins->SetWaterMark(0, 4096);
     ins->EventLoop();
     ins->Release();
 

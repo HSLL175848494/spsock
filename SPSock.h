@@ -163,18 +163,20 @@ namespace HSLL
          * @param num Number of IO threads to create
          * @return true if all resources initialized successfully
          */
-        bool CreateIOEventLoop(ThreadPool<SockTask> *pool, int num);
+        bool CreateIOEventLoop(ThreadPool<SockTaskTcp> *pool, int num);
 
         /**
          * @brief Make the io thread exit and close the corresponding file descriptor
+         * @return true if exited normally
          */
         void ExitIOEventLoop();
 
         /**
          * @brief Main acceptor thread event loop
          * @note Manages listen socket and connection acceptance
+         * @return true if exited normally
          */
-        void MainEventLoop();
+        bool MainEventLoop();
 
         /**
          * @brief IO worker thread event processing loop
@@ -182,7 +184,7 @@ namespace HSLL
          * @param epollfd Epoll instance descriptor
          * @param exitfd Eventfd descriptor for shutdown signaling
          */
-        void IOEventLoop(ThreadPool<SockTask> *pool, int epollfd, int exitfd);
+        void IOEventLoop(ThreadPool<SockTaskTcp> *pool, int epollfd, int exitfd);
 
         /**
          * @brief Releases all network resources
@@ -206,7 +208,7 @@ namespace HSLL
          * @param config Configuration structure with tuning parameters
          * @note Must be called before instance creation
          */
-        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, -1, EPOLLIN, 10000, 10, 5, 0.6, LOG_LEVEL_WARNING});
+        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, EPOLLIN, 10000, 10, 5, 0.6, LOG_LEVEL_WARNING});
 
         /**
          * @brief Gets singleton instance reference

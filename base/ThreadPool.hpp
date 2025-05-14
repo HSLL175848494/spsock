@@ -16,8 +16,10 @@ namespace HSLL
     class ThreadPool
     {
     private:
-        unsigned int batchSize;           ///< Number of tasks to process in bulk operations
-        BlockQueue<T> taskQueue;          ///< Thread-safe queue for storing pending tasks
+        unsigned int batchSize;  ///< Number of tasks to process in bulk operations
+        BlockQueue<T> taskQueue; ///< Thread-safe queue for storing pending tasks
+        std::atomic<unsigned int> count;
+        std::atomic<unsigned int> error;
         std::vector<std::thread> workers; ///< Collection of worker threads
 
     public:
@@ -37,12 +39,23 @@ namespace HSLL
                 return false;
 
             this->batchSize = batchSize;
+            count = 0;
+            error = 0;
 
             if (!taskQueue.init(queueSize))
                 return false;
 
             for (unsigned i = 0; i < threadNum; ++i)
                 workers.emplace_back(&ThreadPool::worker, this);
+
+            while (count != threadNum)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+            if (error)
+            {
+                exit();
+                return false;
+            }
 
             return true;
         }
@@ -135,6 +148,8 @@ namespace HSLL
                 std::aligned_storage_t<sizeof(T), alignof(T)> taskBuffer;
                 T *taskPtr = (T *)(&taskBuffer);
 
+                count++;
+
                 while (true)
                 {
                     if (taskQueue.pop(*taskPtr))
@@ -158,7 +173,12 @@ namespace HSLL
             }
             else
             {
-                T *tasks = static_cast<T *>(operator new[](batchSize * sizeof(T)));
+                T *tasks = (T *)(operator new[](batchSize * sizeof(T), std::nothrow));
+
+                if (!tasks)
+                    error.fetch_and(1);
+
+                count++;
 
                 while (true)
                 {
