@@ -113,7 +113,7 @@ namespace HSLL
         /**
          * @brief Accepts new connections and initializes controllers
          * @param idlefd Reserved file descriptor for EMFILE handling
-         * @return false if error ocurred, true otherwise
+         * @return true if connection processed successfully, false if critical error occurred
          */
         bool HandleConnect(int idlefd);
 
@@ -127,7 +127,7 @@ namespace HSLL
          * @brief Processes read-ready events
          * @param controller Connection controller with pending data
          * @param utilTask Task dispatcher for worker threads
-         * @return false if connection should be closed, true otherwise
+         * @return true to keep connection alive, false to schedule closure
          */
         bool HandleRead(SOCKController *controller, UtilTaskTcp *utilTask);
 
@@ -135,7 +135,7 @@ namespace HSLL
          * @brief Processes write-ready events
          * @param controller Connection controller with write capacity
          * @param utilTask Task dispatcher for worker threads
-         * @return false if connection should be closed, true otherwise
+         * @return true to keep connection alive, false to schedule closure
          */
         bool HandleWrite(SOCKController *controller, UtilTaskTcp *utilTask);
 
@@ -291,20 +291,14 @@ namespace HSLL
     class SPSockUdp : noncopyable
     {
     private:
-        void *ctx;           ///< User context for receive callback
-        int sockfd;          ///< Bound socket descriptor
-        unsigned int status; ///< Internal state flags
+        void *ctx;                        ///< User context for receive callback
+        RecvProc rcp;                     ///< recv processor
+        unsigned int status;              ///< Internal state flags
+        std::vector<int> fds;             ///<  Bound socket descriptors
+        std::vector<std::thread> threads; /// <Eventloop threads
 
         static std::atomic<bool> exitFlag;          ///< Event loop control
         static SPSockUdp<address_family> *instance; ///< Singleton instance
-
-        /**
-         * @brief Signal handler for shutdown requests
-         * @param sg Received signal number
-         */
-        static void HandleExit(int sg);
-
-        bool MainEventLoop(ThreadPool<SockTaskUdp> *pool);
 
         /**
          * @brief Private constructor for singleton pattern
@@ -316,13 +310,25 @@ namespace HSLL
          */
         ~SPSockUdp();
 
+        /**
+         * @brief Signal handler for shutdown requests
+         * @param sg Received signal number
+         */
+        static void HandleExit(int sg);
+
+        /**
+         * @brief Enters datagram processing loop for a specific socket
+         * @param sockfd Socket descriptor to process events on
+         */
+        void MainEventLoop(int sockfd);
+
     public:
         /**
          * @brief Configures global runtime parameters
          * @param config Configuration structure with tuning parameters
          * @note Must be called before instance creation
          */
-        static void Config(SPUdpConfig config = {4 * 1024 * 1024, 50, 500, 10000, 10, 5, LOG_LEVEL_WARNING});
+        static void Config(SPUdpConfig config = {4 * 1024 * 1024, 1452, LOG_LEVEL_WARNING});
 
         /**
          * @brief Gets singleton instance reference
@@ -346,14 +352,15 @@ namespace HSLL
         bool EventLoop() SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Sends datagram to specified endpoint
+         * @brief Sends datagram to specified endpoint using a specific socket
+         * @param sockfd Socket descriptor to use for sending
          * @param data Buffer containing payload
          * @param size Payload size in bytes
          * @param ip Destination IP address
          * @param port Destination port number
-         * @return true if send succeeded
+         * @return true if send operation succeeded, false on error
          */
-        bool SendTo(const void *data, size_t size, const char *ip, unsigned short port);
+        bool SendTo(int sockfd, const void *data, size_t size, const char *ip, unsigned short port);
 
         /**
          * @brief Registers signal handler for shutdown

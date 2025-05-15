@@ -33,7 +33,7 @@ namespace HSLL
     /// Callback function type for connection close events
     typedef void (*CloseProc)(SOCKController *controller);
     ///< Recieve event callback type
-    typedef void (*RecvProc)(void *ctx, const char *data, size_t size, const char *ip, unsigned short port);
+    typedef void (*RecvProc)(void *ctx, int fd, const char *data, size_t size, const char *ip, unsigned short port);
     /// Task processing function type for thread pool
     typedef void (*TaskProc)(SOCKController *ctx, ReadWriteProc proc);
     ///< Re-listen for the event function pointer
@@ -42,8 +42,6 @@ namespace HSLL
     typedef void (*FuncClose)(SOCKController *controller);
     ///< Socket event control function type
     typedef bool (*FuncEvent)(SOCKController *, bool read, bool write);
-    ///< Udp buffer free function type
-    typedef void (*FuncFree)(void *);
 
     /**
      * @brief Protocol types for socket creation
@@ -183,23 +181,11 @@ namespace HSLL
      */
     struct SPUdpConfig
     {
-        //Size of socket receive buffer
+        // Size of socket receive buffer (must be multiple of 1024, minimum 200KB)
         int RECV_BSIZE;
 
-        ///< Number of blocks requested at a time by the buffer pool (range: 1-1024)
-        int BUFFER_POOL_PEER_ALLOC_NUM;
-
-        ///< Minimum number of blocks in the buffer pool (must ≥ BUFFER_POOL_PEER_ALLOC_NUM)
-        int BUFFER_POOL_MIN_BLOCK_NUM;
-
-        ///< Maximum number of tasks in thread pool queue (range: 1-1048576)
-        int THREADPOOL_QUEUE_LENGTH;
-
-        ///< Batch size for submitting tasks to thread pool (must < THREADPOOL_QUEUE_LENGTH)
-        int THREADPOOL_BATCH_SIZE_SUBMIT;
-
-        ///< Batch size for processing tasks in thread pool (range: 1-1024)
-        int THREADPOOL_BATCH_SIZE_PROCESS;
+        ///< Maximum expected UDP payload size (effective data excluding headers)(range: 1452-65507)
+        int MAX_PAYLOAD_SIZE;
 
         ///< Minimum log printing level (valid LOG_LEVEL enum values)
         LOG_LEVEL MIN_LOG_LEVEL;
@@ -216,11 +202,9 @@ namespace HSLL
         extern SPUdpConfig udpConfig;
         extern SPWaterMark markGlobal;
         extern REnableProc renableProc;
-        extern RecvProc funcRecv;
         extern FuncClose funcClose;
         extern FuncEvent funcEvent;
-        extern FuncFree funcFree;
-        extern void *recvCtx;
+        extern LOG_LEVEL minLevel;
     }
 }
 

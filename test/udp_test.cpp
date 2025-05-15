@@ -3,12 +3,12 @@
 
 using namespace HSLL;
 
-std::atomic<unsigned int> sum=0;
+std::atomic<unsigned int> sum = 0;
 
-void echo_rcp(void *ctx, const char *data, size_t size, const char *ip, unsigned short port)
+void echo_rcp(void *ctx, int fd, const char *data, size_t size, const char *ip, unsigned short port)
 {
     auto ins = (SPSockUdp<ADDRESS_FAMILY_INET> *)ctx;
-    ins->SendTo(data, size, ip, port);
+    ins->SendTo(fd, data, size, ip, port);
     sum++;
 }
 

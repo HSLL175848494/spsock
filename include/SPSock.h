@@ -115,7 +115,7 @@ namespace HSLL
          * @param config Configuration structure with tuning parameters
          * @note Must be called before instance creation
          */
-        static void Config(SPUdpConfig config = {4 * 1024 * 1024, 50, 500, 10000, 10, 5, LOG_LEVEL_WARNING});
+        static void Config(SPUdpConfig config = {4 * 1024 * 1024, 1452, LOG_LEVEL_WARNING});
 
         /**
          * @brief Gets singleton instance reference
@@ -139,14 +139,15 @@ namespace HSLL
         bool EventLoop() SPSOCK_ONE_TIME_CALL;
 
         /**
-         * @brief Sends datagram to specified endpoint
+         * @brief Sends datagram to specified endpoint using a specific socket
+         * @param sockfd Socket descriptor to use for sending
          * @param data Buffer containing payload
          * @param size Payload size in bytes
          * @param ip Destination IP address
          * @param port Destination port number
-         * @return true if send succeeded
+         * @return true if send operation succeeded, false on error
          */
-        bool SendTo(const void *data, size_t size, const char *ip, unsigned short port);
+        bool SendTo(int sockfd, const void *data, size_t size, const char *ip, unsigned short port);
 
         /**
          * @brief Registers signal handler for shutdown

@@ -12,10 +12,10 @@ using namespace HSLL::DEFER;
  * @param level Log level to use
  * @param ... Variadic arguments to log
  */
-#define HSLL_LOGINFO(level, ...)                \
-    {                                           \
-        if (level >= tcpConfig.MIN_LOG_LEVEL) \
-            LogInfo(true, level, __VA_ARGS__);  \
+#define HSLL_LOGINFO(level, ...)               \
+    {                                          \
+        if (level >= minLevel)                 \
+            LogInfo(true, level, __VA_ARGS__); \
     }
 
 /**
@@ -25,7 +25,7 @@ using namespace HSLL::DEFER;
  */
 #define HSLL_LOGINFO_NOPREFIX(level, ...)       \
     {                                           \
-        if (level >= tcpConfig.MIN_LOG_LEVEL) \
+        if (level >= minLevel)                  \
             LogInfo(false, level, __VA_ARGS__); \
     }
 

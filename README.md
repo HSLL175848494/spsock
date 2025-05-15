@@ -107,10 +107,10 @@ int main()
 ### UDP服务端示例
 
 ```cpp
-void echo_rcp(void *ctx, const char *data, ssize_t size, const char *ip, unsigned short port) 
+void echo_rcp(void *ctx, int fd, const char *data, ssize_t size, const char *ip, unsigned short port) 
 {
     auto ins = (SPSockUdp<ADDRESS_FAMILY_INET> *)ctx;
-    ins->SendTo(data, size, ip, port);  // 数据回传
+    ins->SendTo(fd, data, size, ip, port);  // 数据回传
 }
 
 int main() 
@@ -181,14 +181,9 @@ int main()
 
 | 参数名                          | 说明                                   | 限制条件                                                             |
 |---------------------------------|----------------------------------------|----------------------------------------------------------------------|
-| `RECV_BSIZE`                   | UDP套接字接收缓冲区大小               | >= 64 * 1024                       |
-| `BUFFER_POOL_PEER_ALLOC_NUM`   | 缓冲池单次分配块数                    | 1-1024                                                              |
-| `BUFFER_POOL_MIN_BLOCK_NUM`    | 缓冲池最小块数                        | ≥ `BUFFER_POOL_PEER_ALLOC_NUM`                                      |
-| `THREADPOOL_QUEUE_LENGTH`      | 线程池任务队列最大容量                | 1-1048576                                                           |
-| `THREADPOOL_BATCH_SIZE_SUBMIT` | 批量提交任务到线程池的批处理大小      | < `THREADPOOL_QUEUE_LENGTH`                                         |
-| `THREADPOOL_BATCH_SIZE_PROCESS`| 线程池处理任务的批处理大小            | 1-1024                                                              |
+| `RECV_BSIZE`                   | UDP套接字接收缓冲区大小               | >= 64 * 1024（需为1024的整数倍，最小64KB）                          |
+| `MAX_PAYLOAD_SIZE`             | 最大预期UDP负载大小（有效数据，不含头部） | 1452-65507（字节）                                                 |
 | `MIN_LOG_LEVEL`                | 最低日志输出等级                      | 有效枚举值：`LOG_LEVEL_INFO`, `LOG_LEVEL_WARNING`, `LOG_LEVEL_CRUCIAL`, `LOG_LEVEL_ERROR` |
-
 ---
 
 ## 注意事项
