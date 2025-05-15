@@ -16,7 +16,7 @@
 2. [快速开始](#快速开始)  
 3. [SPSock关键函数](#spsock关键函数说明)  
 4. [SPController关键函数](#spcontroller关键函数说明)  
-5. [Config配置说明](#SPTcpConfig配置说明)  
+5. [Config配置说明](#sptcpconfig配置说明)  
 6. [注意事项](#注意事项)  
 
 ---
