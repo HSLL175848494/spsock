@@ -23,6 +23,7 @@ void echo_read_write_proc(SOCKController *controller)
 
 int main() // g++ -o3  ../*.cpp write_test.cpp -o test
 {
+    //echo "Hello, UDP Server!" | nc -u 192.168.6.132 4567
     SPSockTcp<ADDRESS_FAMILY_INET>::Config({16 * 1024, 32 * 1024, 16, 64, 10000, EPOLLOUT, 20000, 10, 5, 0.9, LOG_LEVEL_INFO});
 
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();

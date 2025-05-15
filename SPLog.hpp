@@ -14,7 +14,7 @@ using namespace HSLL::DEFER;
  */
 #define HSLL_LOGINFO(level, ...)                \
     {                                           \
-        if (level >= configGlobal.MIN_LOG_LEVEL) \
+        if (level >= tcpConfig.MIN_LOG_LEVEL) \
             LogInfo(true, level, __VA_ARGS__);  \
     }
 
@@ -25,7 +25,7 @@ using namespace HSLL::DEFER;
  */
 #define HSLL_LOGINFO_NOPREFIX(level, ...)       \
     {                                           \
-        if (level >= configGlobal.MIN_LOG_LEVEL) \
+        if (level >= tcpConfig.MIN_LOG_LEVEL) \
             LogInfo(false, level, __VA_ARGS__); \
     }
 

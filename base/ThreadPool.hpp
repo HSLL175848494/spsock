@@ -78,7 +78,7 @@ namespace HSLL
          * @param count Number of tasks in the array
          * @return Number of tasks successfully added
          */
-        unsigned int append_bulk(const T *tasks, unsigned int count)
+        unsigned int append_bulk(T *tasks, unsigned int count)
         {
             return taskQueue.pushBulk(tasks, count);
         }

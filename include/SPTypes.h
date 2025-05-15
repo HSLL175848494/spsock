@@ -50,7 +50,7 @@ namespace HSLL
      * @brief Main socket configuration structure
      * @details Contains all tunable parameters for socket performance and behavior
      */
-    struct SPConfig
+    struct SPTcpConfig
     {
         ///< Read buffer size (must be multiple of 1024, minimum 1KB)
         int READ_BSIZE;
@@ -81,6 +81,34 @@ namespace HSLL
 
         ///< Weight ratio for worker threads (range: 0.0 < ratio < 1.0)
         float WORKER_THREAD_RATIO;
+
+        ///< Minimum log printing level (valid LOG_LEVEL enum values)
+        LOG_LEVEL MIN_LOG_LEVEL;
+    };
+
+     /**
+     * @brief Main socket configuration structure
+     * @details Contains all tunable parameters for socket performance and behavior
+     */
+    struct SPUdpConfig
+    {
+        //Size of socket receive buffer
+        int RECV_BSIZE;
+
+        ///< Number of blocks requested at a time by the buffer pool (range: 1-1024)
+        int BUFFER_POOL_PEER_ALLOC_NUM;
+
+        ///< Minimum number of blocks in the buffer pool (must ≥ BUFFER_POOL_PEER_ALLOC_NUM)
+        int BUFFER_POOL_MIN_BLOCK_NUM;
+
+        ///< Maximum number of tasks in thread pool queue (range: 1-1048576)
+        int THREADPOOL_QUEUE_LENGTH;
+
+        ///< Batch size for submitting tasks to thread pool (must < THREADPOOL_QUEUE_LENGTH)
+        int THREADPOOL_BATCH_SIZE_SUBMIT;
+
+        ///< Batch size for processing tasks in thread pool (range: 1-1024)
+        int THREADPOOL_BATCH_SIZE_PROCESS;
 
         ///< Minimum log printing level (valid LOG_LEVEL enum values)
         LOG_LEVEL MIN_LOG_LEVEL;

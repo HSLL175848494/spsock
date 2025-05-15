@@ -11,7 +11,7 @@
 namespace HSLL
 {
     /**
-     * @brief Main TCP socket management class
+     * @brief TCP socket manager with event-driven architecture
      * @tparam address_family IP version (IPv4/IPv6)
      */
     template <ADDRESS_FAMILY address_family>
@@ -23,7 +23,7 @@ namespace HSLL
          * @param config Configuration structure with tuning parameters
          * @note Must be called before instance creation
          */
-        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, EPOLLIN, 10000, 10, 5, 0.6, LOG_LEVEL_WARNING});
+        static void Config(SPTcpConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, EPOLLIN, 10000, 10, 5, 0.6, LOG_LEVEL_WARNING});
 
         /**
          * @brief Gets singleton instance reference
@@ -103,7 +103,7 @@ namespace HSLL
     };
 
     /**
-     * @brief Main UDP socket management class
+     * @brief UDP socket manager with event-driven architecture
      * @tparam address_family IP version (IPv4/IPv6)
      */
     template <ADDRESS_FAMILY address_family>
@@ -111,10 +111,11 @@ namespace HSLL
     {
     public:
         /**
-         * @brief Configures minimum logging severity
-         * @param minlevel Minimum log level to output
+         * @brief Configures global runtime parameters
+         * @param config Configuration structure with tuning parameters
+         * @note Must be called before instance creation
          */
-        static void Config(LOG_LEVEL minlevel = LOG_LEVEL_WARNING);
+        static void Config(SPUdpConfig config = {4 * 1024 * 1024, 50, 500, 10000, 10, 5, LOG_LEVEL_WARNING});
 
         /**
          * @brief Gets singleton instance reference

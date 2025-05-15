@@ -30,8 +30,6 @@ namespace HSLL
     {
         using TYPE = sockaddr_in; ///< Underlying socket address type
 
-        static unsigned int UDP_MAX_BSIZE; ///< Maximum UDP datagram size including headers
-
         /**
          * @brief Initializes IPv4 socket address structure
          * @param address Reference to sockaddr_in structure to initialize
@@ -47,8 +45,6 @@ namespace HSLL
     struct SOCKADDR_IN<ADDRESS_FAMILY_INET6>
     {
         using TYPE = sockaddr_in6; ///< Underlying socket address type
-
-        static unsigned int UDP_MAX_BSIZE; ///< Maximum UDP datagram size including headers
 
         /**
          * @brief Initializes IPv6 socket address structure
@@ -133,7 +129,7 @@ namespace HSLL
          * @param utilTask Task dispatcher for worker threads
          * @return false if connection should be closed, true otherwise
          */
-        bool HandleRead(SOCKController *controller, UtilTask *utilTask);
+        bool HandleRead(SOCKController *controller, UtilTaskTcp *utilTask);
 
         /**
          * @brief Processes write-ready events
@@ -141,7 +137,7 @@ namespace HSLL
          * @param utilTask Task dispatcher for worker threads
          * @return false if connection should be closed, true otherwise
          */
-        bool HandleWrite(SOCKController *controller, UtilTask *utilTask);
+        bool HandleWrite(SOCKController *controller, UtilTaskTcp *utilTask);
 
         /**
          * @brief Closes connection and cleans resources
@@ -208,7 +204,7 @@ namespace HSLL
          * @param config Configuration structure with tuning parameters
          * @note Must be called before instance creation
          */
-        static void Config(SPConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, EPOLLIN, 10000, 10, 5, 0.6, LOG_LEVEL_WARNING});
+        static void Config(SPTcpConfig config = {16 * 1024, 32 * 1024, 16, 64, 5000, EPOLLIN, 10000, 10, 5, 0.6, LOG_LEVEL_WARNING});
 
         /**
          * @brief Gets singleton instance reference
@@ -295,11 +291,9 @@ namespace HSLL
     class SPSockUdp : noncopyable
     {
     private:
+        void *ctx;           ///< User context for receive callback
         int sockfd;          ///< Bound socket descriptor
         unsigned int status; ///< Internal state flags
-
-        void *ctx;    ///< User context for receive callback
-        RecvProc rcp; ///< Datagram receive callback
 
         static std::atomic<bool> exitFlag;          ///< Event loop control
         static SPSockUdp<address_family> *instance; ///< Singleton instance
@@ -309,6 +303,8 @@ namespace HSLL
          * @param sg Received signal number
          */
         static void HandleExit(int sg);
+
+        bool MainEventLoop(ThreadPool<SockTaskUdp> *pool);
 
         /**
          * @brief Private constructor for singleton pattern
@@ -322,10 +318,11 @@ namespace HSLL
 
     public:
         /**
-         * @brief Configures minimum logging severity
-         * @param minlevel Minimum log level to output
+         * @brief Configures global runtime parameters
+         * @param config Configuration structure with tuning parameters
+         * @note Must be called before instance creation
          */
-        static void Config(LOG_LEVEL minlevel = LOG_LEVEL_WARNING);
+        static void Config(SPUdpConfig config = {4 * 1024 * 1024, 50, 500, 10000, 10, 5, LOG_LEVEL_WARNING});
 
         /**
          * @brief Gets singleton instance reference

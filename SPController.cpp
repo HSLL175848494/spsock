@@ -15,7 +15,7 @@ namespace HSLL
         this->fd = fd;
         this->info = info;
         this->ctx = ctx;
-        this->events = configGlobal.EPOLL_DEFAULT_EVENT;
+        this->events = tcpConfig.EPOLL_DEFAULT_EVENT;
         peerClosed = false;
         ipPort = "[" + std::string(ip) + "]:" + std::to_string(port);
         return true;
@@ -163,12 +163,12 @@ namespace HSLL
 
     size_t SOCKController::getReadBufferCapacity()
     {
-        return configGlobal.READ_BSIZE;
+        return tcpConfig.READ_BSIZE;
     }
 
     size_t SOCKController::getWriteBufferCapacity()
     {
-        return configGlobal.WRITE_BSIZE;
+        return tcpConfig.WRITE_BSIZE;
     }
 
     ssize_t SOCKController::writeBack()

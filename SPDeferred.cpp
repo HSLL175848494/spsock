@@ -8,14 +8,19 @@ namespace HSLL::DEFER
             controller->close();
     }
 
+    void *recvCtx;
+    RecvProc funcRecv;
+    FuncFree funcFree;
     FuncClose funcClose;
     FuncEvent funcEvent;
-    SPConfig configGlobal;
-    REnableProc renableProc = SPDefered::REnableFunc;
+    SPTcpConfig tcpConfig;
+    SPUdpConfig udpConfig;
     SPWaterMark markGlobal{0, 0};
+    REnableProc renableProc = SPDefered::REnableFunc;
 }
 
 namespace HSLL
 {
-    SPBufferPool SPBufferPool::pool;
+    SPTcpBufferPool SPTcpBufferPool::pool;
+    SPUdpBufferPool SPUdpBufferPool::pool;
 }

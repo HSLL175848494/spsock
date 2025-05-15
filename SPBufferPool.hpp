@@ -13,9 +13,9 @@ namespace HSLL
      * Manages separate memory pools for read/write buffers using a linked list structure.
      * Implements reference counting for block management and memory reuse.
      */
-    class SPBufferPool : noncopyable
+    class SPTcpBufferPool : noncopyable
     {
-        static SPBufferPool pool; ///< Singleton instance
+        static SPTcpBufferPool pool; ///< Singleton instance
 
         void *rBuffers;      ///< Head of free list for read buffers
         void *wBuffers;      ///< Head of free list for write buffers
@@ -33,8 +33,8 @@ namespace HSLL
          */
         bool tryAlloc(int num)
         {
-            const int peerReadBSize = configGlobal.READ_BSIZE + 2 * sizeof(void *);
-            const int peerWriteBSize = configGlobal.WRITE_BSIZE + 2 * sizeof(void *);
+            const int peerReadBSize = tcpConfig.READ_BSIZE + 2 * sizeof(void *);
+            const int peerWriteBSize = tcpConfig.WRITE_BSIZE + 2 * sizeof(void *);
             const int totalSize = 4 + (peerReadBSize + peerWriteBSize) * num;
 
             void *buf;
@@ -73,7 +73,7 @@ namespace HSLL
          */
         bool Alloc()
         {
-            int num = configGlobal.BUFFER_POOL_PEER_ALLOC_NUM;
+            int num = tcpConfig.BUFFER_POOL_PEER_ALLOC_NUM;
             while (num > 0)
             {
                 if (tryAlloc(num))
@@ -128,7 +128,7 @@ namespace HSLL
             void **nodePtr = (void **)(node);
             unsigned int &refCount = *(unsigned int *)(nodePtr[0]);
 
-            if (rbSize >= configGlobal.BUFFER_POOL_MIN_BLOCK_NUM)
+            if (rbSize >= tcpConfig.BUFFER_POOL_MIN_BLOCK_NUM)
             {
                 --refCount;
                 if (refCount == 0)
@@ -153,7 +153,7 @@ namespace HSLL
             void **nodePtr = (void **)(node);
             unsigned int &refCount = *(unsigned int *)(nodePtr[0]);
 
-            if (wbSize >= configGlobal.BUFFER_POOL_MIN_BLOCK_NUM)
+            if (wbSize >= tcpConfig.BUFFER_POOL_MIN_BLOCK_NUM)
             {
                 --refCount;
                 if (refCount == 0)
@@ -197,12 +197,12 @@ namespace HSLL
         /**
          * @brief Private constructor initializes empty pools
          */
-        SPBufferPool() : rbSize(0), wbSize(0), rBuffers(NULL), wBuffers(NULL) {}
+        SPTcpBufferPool() : rbSize(0), wbSize(0), rBuffers(NULL), wBuffers(NULL) {}
 
         /**
          * @brief Destructor cleans up all allocated memory blocks
          */
-        ~SPBufferPool()
+        ~SPTcpBufferPool()
         {
             releaseAllBlocks();
         }
@@ -240,6 +240,147 @@ namespace HSLL
             pool.wbSize = 0;
             pool.rBuffers = nullptr;
             pool.wBuffers = nullptr;
+        }
+    };
+
+    /**
+     * @brief Singleton memory pool manager for UDP buffer allocation
+     * Manages a memory pool for UDP buffers using a linked list structure.
+     * Implements reference counting for block management and memory reuse.
+     */
+    class SPUdpBufferPool : noncopyable
+    {
+        static SPUdpBufferPool pool; ///< Singleton instance
+
+        void *buffers;           ///< Head of free list for UDP buffers
+        unsigned int bufferSize; ///< Number of available UDP buffers in pool
+
+        /**
+         * @brief Attempt to allocate a block of buffers
+         * @param num Number of buffers to allocate
+         * @return true if allocation succeeded, false otherwise
+         * Allocates a memory block containing 'num' UDP buffers.
+         * Each buffer is preceded by metadata (block reference + next pointer).
+         * Organized as:
+         * [header][buffer1][buffer2]...[bufferN]
+         */
+        bool tryAlloc(int num)
+        {
+            const int udpBufferSize = 1500 + 2 * sizeof(void *);
+            const int totalSize = sizeof(unsigned int) + udpBufferSize * num;
+
+            void *buf;
+            if ((buf = malloc(totalSize)) == nullptr)
+                return false;
+
+            *(unsigned int *)buf = num;
+            void *current = (char *)buf + sizeof(unsigned int);
+
+            for (int i = 0; i < num; ++i)
+            {
+                void **node = (void **)current;
+                node[0] = buf;
+                node[1] = (i < num - 1) ? (char *)current + udpBufferSize : buffers;
+                current = (char *)current + udpBufferSize;
+            }
+
+            buffers = (char *)buf + sizeof(unsigned int);
+            bufferSize += num;
+            return true;
+        }
+
+        /**
+         * @brief Allocate buffers using exponential backoff strategy
+         * @return true if allocation succeeded, false on complete failure
+         */
+        bool Alloc()
+        {
+            int num = udpConfig.BUFFER_POOL_PEER_ALLOC_NUM;
+            while (num > 0)
+            {
+                if (tryAlloc(num))
+                    return true;
+                num /= 2;
+            }
+            return false;
+        }
+
+        /**
+         * @brief Releases all memory blocks by traversing free list
+         * Decrements reference counts and frees blocks when count reaches zero
+         */
+        void releaseAllBlocks()
+        {
+            while (buffers)
+            {
+                void **node = (void **)buffers;
+                unsigned int &refCount = *(unsigned int *)node[0];
+                buffers = node[1]; // Move to next node before potential free
+
+                --refCount;
+                if (refCount == 0)
+                    free(node[0]); // Free entire memory block
+            }
+        }
+
+        SPUdpBufferPool() : buffers(nullptr), bufferSize(0) {}
+        ~SPUdpBufferPool() { releaseAllBlocks(); }
+
+    public:
+        /**
+         * @brief Get a buffer from the UDP pool
+         * @return Pointer to allocated buffer or NULL on failure
+         */
+        static void *GetBuffer()
+        {
+            SPUdpBufferPool &instance = pool;
+
+            if (!instance.buffers && !instance.Alloc())
+                return nullptr;
+
+            void *node = instance.buffers;
+            void **nodePtr = (void **)node;
+            instance.buffers = nodePtr[1];
+            --instance.bufferSize;
+
+            return (char *)node + 2 * sizeof(void *);
+        }
+
+        /**
+         * @brief Return a UDP buffer to the pool
+         * @param buf Buffer to release (must be pointer returned by GetBuffer)
+         * Either adds buffer back to free list or decrements block reference count
+         */
+        static void FreeBuffer(void *buf)
+        {
+            SPUdpBufferPool &instance = pool;
+            void *node = (char *)buf - 2 * sizeof(void *);
+            void **nodePtr = (void **)node;
+            unsigned int &refCount = *(unsigned int *)nodePtr[0];
+
+            if (instance.bufferSize >= udpConfig.BUFFER_POOL_MIN_BLOCK_NUM)
+            {
+                if (--refCount == 0)
+                    free(nodePtr[0]);
+            }
+            else
+            {
+                nodePtr[1] = instance.buffers;
+                instance.buffers = node;
+                ++instance.bufferSize;
+            }
+        }
+
+        /**
+         * @brief Resets the buffer pool to initial state, releasing all allocated memory
+         * @note User must ensure all buffers are returned before calling this method.
+         *       Calling this with outstanding buffers will cause memory corruption.
+         */
+        static void reset()
+        {
+            pool.releaseAllBlocks();
+            pool.buffers = nullptr;
+            pool.bufferSize = 0;
         }
     };
 }

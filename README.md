@@ -159,7 +159,7 @@ int main()
 
 ---
 
-## SPConfig配置说明
+## SPTcpConfig配置说明
 
 | 参数名                          | 说明                                   | 限制条件                                                             |
 |---------------------------------|----------------------------------------|----------------------------------------------------------------------|
@@ -173,6 +173,20 @@ int main()
 | `THREADPOOL_BATCH_SIZE_SUBMIT` | 批量提交任务到线程池的批处理大小      | < `THREADPOOL_QUEUE_LENGTH`                                         |
 | `THREADPOOL_BATCH_SIZE_PROCESS`| 线程池处理任务的批处理大小            | 1-1024                                                              |
 | `WORKER_THREAD_RATIO`          | 工作线程占比                          | `0.0 < ratio < 1.0`                                                 |
+| `MIN_LOG_LEVEL`                | 最低日志输出等级                      | 有效枚举值：`LOG_LEVEL_INFO`, `LOG_LEVEL_WARNING`, `LOG_LEVEL_CRUCIAL`, `LOG_LEVEL_ERROR` |
+
+---
+
+## SPUdpConfig配置说明
+
+| 参数名                          | 说明                                   | 限制条件                                                             |
+|---------------------------------|----------------------------------------|----------------------------------------------------------------------|
+| `RECV_BSIZE`                   | UDP套接字接收缓冲区大小               | >= 64 * 1024                       |
+| `BUFFER_POOL_PEER_ALLOC_NUM`   | 缓冲池单次分配块数                    | 1-1024                                                              |
+| `BUFFER_POOL_MIN_BLOCK_NUM`    | 缓冲池最小块数                        | ≥ `BUFFER_POOL_PEER_ALLOC_NUM`                                      |
+| `THREADPOOL_QUEUE_LENGTH`      | 线程池任务队列最大容量                | 1-1048576                                                           |
+| `THREADPOOL_BATCH_SIZE_SUBMIT` | 批量提交任务到线程池的批处理大小      | < `THREADPOOL_QUEUE_LENGTH`                                         |
+| `THREADPOOL_BATCH_SIZE_PROCESS`| 线程池处理任务的批处理大小            | 1-1024                                                              |
 | `MIN_LOG_LEVEL`                | 最低日志输出等级                      | 有效枚举值：`LOG_LEVEL_INFO`, `LOG_LEVEL_WARNING`, `LOG_LEVEL_CRUCIAL`, `LOG_LEVEL_ERROR` |
 
 ---

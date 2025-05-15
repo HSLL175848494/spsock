@@ -2,10 +2,6 @@
 
 namespace HSLL
 {
-    // Static member initialization
-    unsigned int SOCKADDR_IN<ADDRESS_FAMILY_INET>::UDP_MAX_BSIZE = 65535;
-    unsigned int SOCKADDR_IN<ADDRESS_FAMILY_INET6>::UDP_MAX_BSIZE = 65527;
-
     // SOCKADDR_IN Implementation
     void SOCKADDR_IN<ADDRESS_FAMILY_INET>::INIT(sockaddr_in &address, unsigned short port)
     {
@@ -127,7 +123,7 @@ namespace HSLL
         else
         {
             epoll_event event;
-            event.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLONESHOT | configGlobal.EPOLL_DEFAULT_EVENT;
+            event.events = EPOLLERR | EPOLLHUP | EPOLLRDHUP | EPOLLONESHOT | tcpConfig.EPOLL_DEFAULT_EVENT;
             event.data.fd = fd;
             if (epoll_ctl(info->epollfd, EPOLL_CTL_ADD, fd, &event) != 0)
             {
@@ -204,7 +200,7 @@ namespace HSLL
         }
         else
         {
-            float weight = configGlobal.WORKER_THREAD_RATIO;
+            float weight = tcpConfig.WORKER_THREAD_RATIO;
             *workerThreads = hardware_threads * weight + 0.5;
             *ioThreads = hardware_threads - *workerThreads;
 
@@ -342,14 +338,14 @@ namespace HSLL
     template <ADDRESS_FAMILY address_family>
     void SPSockTcp<address_family>::IOEventLoop(ThreadPool<SockTaskTcp> *pool, int epollfd, int exitfd)
     {
-        UtilTask utilTask;
+        UtilTaskTcp utilTask;
         if (!utilTask.init(pool))
         {
             throw std::bad_alloc();
             return;
         }
 
-        epoll_event *events = new (std::nothrow) epoll_event[configGlobal.EPOLL_MAX_EVENT_BSIZE];
+        epoll_event *events = new (std::nothrow) epoll_event[tcpConfig.EPOLL_MAX_EVENT_BSIZE];
         if (!events)
         {
             throw std::bad_alloc();
@@ -358,7 +354,7 @@ namespace HSLL
 
         while (true)
         {
-            int nfds = epoll_wait(epollfd, events, configGlobal.EPOLL_MAX_EVENT_BSIZE, -1);
+            int nfds = epoll_wait(epollfd, events, tcpConfig.EPOLL_MAX_EVENT_BSIZE, -1);
             if (nfds == -1)
             {
                 if (errno == EINTR)
@@ -434,7 +430,7 @@ namespace HSLL
     };
 
     template <ADDRESS_FAMILY address_family>
-    void SPSockTcp<address_family>::Config(SPConfig config)
+    void SPSockTcp<address_family>::Config(SPTcpConfig config)
     {
         assert(config.READ_BSIZE >= 1024 && (config.READ_BSIZE % 1024) == 0);
         assert(config.WRITE_BSIZE >= 1024 && (config.WRITE_BSIZE % 1024) == 0);
@@ -449,7 +445,7 @@ namespace HSLL
 
         funcClose = ActiveClose;
         funcEvent = EnableEvent;
-        configGlobal = config;
+        tcpConfig = config;
     }
 
     template <ADDRESS_FAMILY address_family>
@@ -540,7 +536,7 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockTcp<address_family>::HandleRead(SOCKController *controller, UtilTask *utilTask)
+    bool SPSockTcp<address_family>::HandleRead(SOCKController *controller, UtilTaskTcp *utilTask)
     {
         if (proc.rdp)
         {
@@ -579,7 +575,7 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockTcp<address_family>::HandleWrite(SOCKController *controller, UtilTask *utilTask)
+    bool SPSockTcp<address_family>::HandleWrite(SOCKController *controller, UtilTaskTcp *utilTask)
     {
         if (proc.wtp)
         {
@@ -650,8 +646,8 @@ namespace HSLL
 
         ThreadPool<SockTaskTcp> pool;
 
-        if (!pool.init(configGlobal.THREADPOOL_QUEUE_LENGTH, workerThreads,
-                       configGlobal.THREADPOOL_BATCH_SIZE_PROCESS))
+        if (!pool.init(tcpConfig.THREADPOOL_QUEUE_LENGTH, workerThreads,
+                       tcpConfig.THREADPOOL_BATCH_SIZE_PROCESS))
         {
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to initialize thread pool: There is not enough memory space");
             return false;
@@ -775,7 +771,7 @@ namespace HSLL
         {
             delete instance;
             instance = nullptr;
-            SPBufferPool::reset();
+            SPTcpBufferPool::reset();
             HSLL_LOGINFO(LOG_LEVEL_INFO, "Instance released successfully");
         }
     }
@@ -793,6 +789,78 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
+    bool SPSockUdp<address_family>::MainEventLoop(ThreadPool<SockTaskUdp> *pool)
+    {
+        UtilTaskUdp utilTask;
+        if (!utilTask.init(pool))
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to UtilTaskUdp: There is not enough memory space");
+            return false;
+        }
+
+        typename SOCKADDR_IN<address_family>::TYPE addr;
+        char discard[1500];
+        socklen_t addrlen = sizeof(addr);
+
+        HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop started");
+        while (exitFlag.load(std::memory_order_acquire))
+        {
+            void *buf = SPUdpBufferPool::GetBuffer();
+            ssize_t bytes;
+            if (buf)
+            {
+                bytes = recvfrom(sockfd, buf, 1500, 0, (sockaddr *)&addr, &addrlen);
+            }
+            else
+            {
+                bytes = recvfrom(sockfd, discard, 1500, 0, (sockaddr *)&addr, &addrlen);
+                if (bytes == -1)
+                {
+                    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                    {
+                        utilTask.commit();
+                        continue;
+                    }
+
+                    HSLL_LOGINFO(LOG_LEVEL_ERROR, "recvfrom() failed: ", strerror(errno));
+                    return false;
+                }
+                continue;
+            }
+
+            if (bytes == -1)
+            {
+                if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                {
+                    SPUdpBufferPool::FreeBuffer(buf);
+                    utilTask.commit();
+                    continue;
+                }
+
+                SPUdpBufferPool::FreeBuffer(buf);
+                HSLL_LOGINFO(LOG_LEVEL_ERROR, "recvfrom() failed: ", strerror(errno));
+                return false;
+            }
+
+            char ip[INET6_ADDRSTRLEN];
+            unsigned short port = 0;
+
+            if constexpr (address_family == ADDRESS_FAMILY_INET)
+            {
+                inet_ntop(AF_INET, &addr.sin_addr, ip, INET6_ADDRSTRLEN);
+                port = ntohs(addr.sin_port);
+            }
+            else
+            {
+                inet_ntop(AF_INET6, &addr.sin6_addr, ip, INET6_ADDRSTRLEN);
+                port = ntohs(addr.sin6_port);
+            }
+            utilTask.append(ctx, (char *)buf, bytes, ip, port);
+        }
+        return true;
+    }
+
+    template <ADDRESS_FAMILY address_family>
     SPSockUdp<address_family>::SPSockUdp() : sockfd(-1), status(0) {}
 
     template <ADDRESS_FAMILY address_family>
@@ -803,9 +871,16 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    void SPSockUdp<address_family>::Config(LOG_LEVEL minlevel)
+    void SPSockUdp<address_family>::Config(SPUdpConfig config)
     {
-        configGlobal.MIN_LOG_LEVEL = minlevel;
+        assert(config.RECV_BSIZE >= 200 * 1024 && (config.RECV_BSIZE % 1024) == 0);
+        assert(config.BUFFER_POOL_PEER_ALLOC_NUM >= 1 && config.BUFFER_POOL_PEER_ALLOC_NUM <= 1024);
+        assert(config.BUFFER_POOL_MIN_BLOCK_NUM >= config.BUFFER_POOL_PEER_ALLOC_NUM);
+        assert(config.THREADPOOL_QUEUE_LENGTH > 0 && config.THREADPOOL_QUEUE_LENGTH <= 1048576);
+        assert(config.THREADPOOL_BATCH_SIZE_SUBMIT > 0 && config.THREADPOOL_BATCH_SIZE_SUBMIT <= config.THREADPOOL_QUEUE_LENGTH);
+        assert(config.THREADPOOL_BATCH_SIZE_PROCESS > 0 && config.THREADPOOL_BATCH_SIZE_PROCESS <= 1024);
+        udpConfig = config;
+        funcFree = SPUdpBufferPool::FreeBuffer;
     };
 
     template <ADDRESS_FAMILY address_family>
@@ -832,6 +907,25 @@ namespace HSLL
         if ((sockfd = socket(address_family, PROTOCOL_UDP, 0)) == -1)
         {
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "socket() failed: ", strerror(errno));
+            return false;
+        }
+
+        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &udpConfig.RECV_BSIZE, sizeof(udpConfig.RECV_BSIZE)))
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "setsockopt(SO_RCVBUF) failed: ", strerror(errno));
+            close(sockfd);
+            sockfd = -1;
+            return false;
+        }
+
+        timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 10 * 1000;
+        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)))
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "setsockopt(SO_RCVTIMEO) failed: ", strerror(errno));
+            close(sockfd);
+            sockfd = -1;
             return false;
         }
 
@@ -884,44 +978,25 @@ namespace HSLL
             HSLL_LOGINFO(LOG_LEVEL_WARNING, "Exit signal handler not configured");
         }
 
-        auto UDP_MAX_BSIZE = SOCKADDR_IN<address_family>::UDP_MAX_BSIZE;
-        typename SOCKADDR_IN<address_family>::TYPE addr;
-        char buf[UDP_MAX_BSIZE];
-        socklen_t addrlen = sizeof(addr);
-
-        HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop started");
-        while (exitFlag.load(std::memory_order_acquire))
+        unsigned int hardware_threads = std::thread::hardware_concurrency();
+        if (hardware_threads == 0)
         {
-            ssize_t bytes = recvfrom(sockfd, buf, UDP_MAX_BSIZE, 0, (sockaddr *)&addr, &addrlen);
-
-            if (bytes == -1)
-            {
-                if (errno == EINTR)
-                    continue;
-
-                HSLL_LOGINFO(LOG_LEVEL_ERROR, "recvfrom() failed: ", strerror(errno));
-                status |= 0x8;
-                return false;
-            }
-
-            char ip[INET6_ADDRSTRLEN];
-            unsigned short port = 0;
-
-            if constexpr (address_family == ADDRESS_FAMILY_INET)
-            {
-                inet_ntop(AF_INET, &addr.sin_addr, ip, INET6_ADDRSTRLEN);
-                port = ntohs(addr.sin_port);
-            }
-            else
-            {
-                inet_ntop(AF_INET6, &addr.sin6_addr, ip, INET6_ADDRSTRLEN);
-                port = ntohs(addr.sin6_port);
-            }
-
-            rcp(ctx, buf, bytes, ip, port);
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to get the number of CPU cores");
+            return false;
         }
 
-        status |= 0x8;
+        ThreadPool<SockTaskUdp> pool;
+        if (!pool.init(udpConfig.THREADPOOL_QUEUE_LENGTH, hardware_threads, udpConfig.THREADPOOL_BATCH_SIZE_PROCESS))
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "Failed to initialize thread pool: There is not enough memory space");
+            return false;
+        }
+
+        if (!MainEventLoop(&pool))
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "MainEventLoop() failed");
+
+        pool.exit();
+        SPUdpBufferPool::reset();
         HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop exited");
         return true;
     }
@@ -1001,8 +1076,8 @@ namespace HSLL
             return false;
         }
 
-        this->rcp = rcp;
-        this->ctx = ctx;
+        recvCtx = ctx;
+        funcRecv = rcp;
         status |= 0x2;
         HSLL_LOGINFO(LOG_LEVEL_INFO, "Callback configured successfully");
         return true;

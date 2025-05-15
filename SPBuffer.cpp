@@ -8,11 +8,11 @@ namespace HSLL
     bool SPBuffer::Init()
     {
         if (type == BUFFER_TYPE_READ)
-            bsize = configGlobal.READ_BSIZE;
+            bsize = tcpConfig.READ_BSIZE;
         else
-            bsize = configGlobal.WRITE_BSIZE;
+            bsize = tcpConfig.WRITE_BSIZE;
 
-        buffer = (unsigned char *)SPBufferPool::GetBuffer(type);
+        buffer = (unsigned char *)SPTcpBufferPool::GetBuffer(type);
         return buffer != nullptr;
     }
 
@@ -124,6 +124,6 @@ namespace HSLL
     SPBuffer::~SPBuffer()
     {
         if (buffer)
-            SPBufferPool::FreeBuffer(buffer, type);
+            SPTcpBufferPool::FreeBuffer(buffer, type);
     }
 }

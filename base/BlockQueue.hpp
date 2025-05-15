@@ -401,7 +401,7 @@ namespace HSLL
 		 * @param count Number of elements to push
 		 * @return Actual number of elements pushed
 		 */
-		unsigned int pushBulk(const TYPE *elements, unsigned int count)
+		unsigned int pushBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
@@ -419,7 +419,7 @@ namespace HSLL
 
 			for (; LIKELY(actualCount < count && current); ++actualCount)
 			{
-				new (&current->data) TYPE(elements[actualCount]);
+				new (&current->data) TYPE(std::move(elements[actualCount]));
 				tail = current;
 				current = current->next;
 			}
@@ -449,7 +449,7 @@ namespace HSLL
 		 * @param count Number of elements to push
 		 * @return Actual number of elements pushed before stop
 		 */
-		unsigned int wait_pushBulk(const TYPE *elements, unsigned int count)
+		unsigned int wait_pushBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0) || UNLIKELY(isStopped.load(std::memory_order_acquire)))
 				return 0;
@@ -485,7 +485,7 @@ namespace HSLL
 				Node *current = head;
 				for (unsigned i = 0; LIKELY(i < allocated); ++i)
 				{
-					new (&current->data) TYPE(elements[pushed + i]);
+					new (&current->data) TYPE(std::move(elements[pushed + i]));
 					current = current->next;
 				}
 
@@ -525,7 +525,7 @@ namespace HSLL
 		 * @return Actual number of elements pushed
 		 */
 		template <class Rep, class Period>
-		unsigned int wait_pushBulk(const TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
+		unsigned int wait_pushBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
@@ -536,7 +536,7 @@ namespace HSLL
 			while (LIKELY(pushed < count) && LIKELY(!isStopped.load(std::memory_order_acquire)))
 			{
 				Node *head = nullptr;
-					unsigned allocated = 0;
+				unsigned allocated = 0;
 				{
 					std::unique_lock<std::mutex> lock(freeListMutex);
 					if (!notFullCond.wait_until(lock, deadline, [this]
@@ -562,7 +562,7 @@ namespace HSLL
 				Node *current = head;
 				for (unsigned i = 0; LIKELY(i < allocated); ++i)
 				{
-					new (&current->data) TYPE(elements[pushed + i]);
+					new (&current->data) TYPE(std::move(elements[pushed + i]));
 					current = current->next;
 				}
 
