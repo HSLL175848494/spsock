@@ -33,9 +33,11 @@ namespace HSLL
         /**
          * @brief Initializes IPv4 socket address structure
          * @param address Reference to sockaddr_in structure to initialize
+         * @param ip Null-terminated string representing IPv4 address in dotted-decimal format (e.g., "192.168.0.1")
          * @param port Host byte order port number to convert
+         * @return false if ip format incorrect
          */
-        static void INIT(sockaddr_in &address, unsigned short port);
+        static bool INIT(sockaddr_in &address, const char *ip, unsigned short port);
     };
 
     /**
@@ -49,9 +51,11 @@ namespace HSLL
         /**
          * @brief Initializes IPv6 socket address structure
          * @param address Reference to sockaddr_in6 structure to initialize
+         * @param ip Null-terminated string representing IPv6 address in standard or compressed notation (e.g., "2001:0db8::1" or "::1")
          * @param port Host byte order port number to convert
+         * @return false if ip format incorrect
          */
-        static void INIT(sockaddr_in6 &address, unsigned short port);
+        static bool INIT(sockaddr_in6 &address, const char *ip, unsigned short port);
     };
 
     /**
@@ -216,10 +220,11 @@ namespace HSLL
         /**
          * @brief Starts listening on specified port
          * @param port Network port to bind
+         * @param ip Null-terminated string representing IPv4/IPv6 address
          * @return true if listen succeeded, false on error
          * @note One-time call during initialization
          */
-        bool Listen(unsigned short port) SPSOCK_ONE_TIME_CALL;
+        bool Listen(unsigned short port, const char *ip = nullptr) SPSOCK_ONE_TIME_CALL;
 
         /**
          * @brief Enters main event processing loop
@@ -339,10 +344,11 @@ namespace HSLL
         /**
          * @brief Binds socket to network port
          * @param port Network port to bind
+         * @param ip Null-terminated string representing IPv4/IPv6 address
          * @return true if bind succeeded, false on error
          * @note One-time call during initialization
          */
-        bool Bind(unsigned short port) SPSOCK_ONE_TIME_CALL;
+        bool Bind(unsigned short port, const char *ip = nullptr) SPSOCK_ONE_TIME_CALL;
 
         /**
          * @brief Enters datagram processing loop

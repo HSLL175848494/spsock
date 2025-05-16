@@ -56,7 +56,7 @@ make
 ### TCP服务端示例
 
 ```cpp
-#include "SPSock.hpp"
+#include "SPSock.h"
 
 void echo_read_write_proc(SOCKController *controller) 
 {
@@ -74,7 +74,7 @@ void echo_read_write_proc(SOCKController *controller)
     {
         bool ret;
         if (controller->getReadBufferSize())  // 未发送完毕
-            ret = controller->enableEvents(false, true);
+            ret = controller->enableEvents(true, true);
          else  
             ret = controller->enableEvents(true, false);
     
@@ -86,15 +86,17 @@ void echo_read_write_proc(SOCKController *controller)
 int main() 
 {
     SPSockTcp<ADDRESS_FAMILY_INET>::Config();  // 配置
-
     auto ins = SPSockTcp<ADDRESS_FAMILY_INET>::GetInstance();  // 获取实例
 
     if (!ins->EnableKeepAlive(true, 120, 2, 10)) // 设置keepalive
         return -1;    
+
     if (!ins->SetCallback(nullptr, nullptr, echo_read_write_proc, echo_read_write_proc)) // 设置读写回调
         return -1;  
+
     if (!ins->SetSignalExit(SIGINT))   // 设置退出信号
-        return -1;              
+        return -1;      
+
     if (!ins->Listen(4567)) // 设置监听端口
         return -1;                         
 
@@ -107,6 +109,8 @@ int main()
 ### UDP服务端示例
 
 ```cpp
+#include "SPSock.h"
+
 void echo_rcp(void *ctx, int fd, const char *data, ssize_t size, const char *ip, unsigned short port) 
 {
     auto ins = (SPSockUdp<ADDRESS_FAMILY_INET> *)ctx;
@@ -115,19 +119,20 @@ void echo_rcp(void *ctx, int fd, const char *data, ssize_t size, const char *ip,
 
 int main() 
 {
-    SPSockUdp<ADDRESS_FAMILY_INET>::Config();  // 配置
-    
+    SPSockUdp<ADDRESS_FAMILY_INET>::Config();                  // 配置
     auto ins = SPSockUdp<ADDRESS_FAMILY_INET>::GetInstance();  // 获取实例
 
-    if (!ins->Bind(4567)) 
-        return -1;           // 绑定端口
-    if (!ins->SetCallback(echo_rcp, ins)) 
-        return -1;  // 设置回调
-    if (!ins->SetSignalExit(SIGINT)) 
-        return -1;        // 设置退出信号
+    if (!ins->Bind(4567))                                      // 绑定端口
+        return -1;                                           
 
-    ins->EventLoop();  // 事件循环
-    ins->Release();    // 释放实例
+    if (!ins->SetCallback(echo_rcp, ins))                      // 设置回调
+        return -1;  
+
+    if (!ins->SetSignalExit(SIGINT))                           // 设置退出信号
+        return -1;       
+
+    ins->EventLoop();                                          // 事件循环
+    ins->Release();                                            // 释放实例
 }
 ```
 
@@ -173,7 +178,7 @@ int main()
 | `THREADPOOL_BATCH_SIZE_SUBMIT` | 批量提交任务到线程池的批处理大小      | < `THREADPOOL_QUEUE_LENGTH`                                         |
 | `THREADPOOL_BATCH_SIZE_PROCESS`| 线程池处理任务的批处理大小            | 1-1024                                                              |
 | `WORKER_THREAD_RATIO`          | 工作线程占比                          | `0.0 < ratio < 1.0`                                                 |
-| `MIN_LOG_LEVEL`                | 最低日志输出等级                      | 有效枚举值：`LOG_LEVEL_INFO`, `LOG_LEVEL_WARNING`, `LOG_LEVEL_CRUCIAL`, `LOG_LEVEL_ERROR` |
+| `MIN_LOG_LEVEL`                | 最低日志输出等级                      | 有效枚举值：`LOG_LEVEL_INFO`, `LOG_LEVEL_WARNING`, `LOG_LEVEL_CRUCIAL`, `LOG_LEVEL_ERROR`, `LOG_LEVEL_NONE` |
 
 ---
 
@@ -183,7 +188,7 @@ int main()
 |---------------------------------|----------------------------------------|----------------------------------------------------------------------|
 | `RECV_BSIZE`                   | UDP套接字接收缓冲区大小               | >= 64 * 1024（需为1024的整数倍，最小64KB）                          |
 | `MAX_PAYLOAD_SIZE`             | 最大预期UDP负载大小（有效数据，不含头部） | 1452-65507（字节）                                                 |
-| `MIN_LOG_LEVEL`                | 最低日志输出等级                      | 有效枚举值：`LOG_LEVEL_INFO`, `LOG_LEVEL_WARNING`, `LOG_LEVEL_CRUCIAL`, `LOG_LEVEL_ERROR` |
+| `MIN_LOG_LEVEL`                | 最低日志输出等级                      | 有效枚举值：`LOG_LEVEL_INFO`, `LOG_LEVEL_WARNING`, `LOG_LEVEL_CRUCIAL`, `LOG_LEVEL_ERROR`, `LOG_LEVEL_NONE` |
 ---
 
 ## 注意事项
@@ -192,4 +197,4 @@ int main()
 2. **实例释放**：实例获取后必须通过 `Release()` 释放。  
 3. **回调线程**：读写回调在线程池内进行，连接建立和关闭回调在线程循环中进行。  
 4. **事件监听**：每次触发回调后必须调用 `enableEvents()` 重新启用指定事件监听。  
-5. **资源释放**：对端关闭且读取完所有数据后，应立即调用 `SOCKController` 的 `close` 方法释放资源。  
+5. **资源释放**：对端关闭且读取完所有数据后，应立即调用 `SOCKController` 的 `close` 方法关闭连接 

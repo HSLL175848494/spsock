@@ -6,7 +6,7 @@ namespace HSLL
     /**
      * @brief Circular buffer implementation for efficient I/O operations
      * This class provides a thread-unsafe circular buffer with separate
-     * read and write pointers, optimized for network I/O operations.
+     * read and write pointers, optimized for network I/O operations
      */
     class SPBuffer
     {

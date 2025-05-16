@@ -70,6 +70,7 @@ namespace HSLL
         LOG_LEVEL_WARNING = 1, ///< Warning messages indicating potential issues
         LOG_LEVEL_CRUCIAL = 2, ///< Critical messages requiring immediate attention
         LOG_LEVEL_ERROR = 3,   ///< Error messages indicating failure conditions
+        LOG_LEVEL_NONE = 10,   ///< No messages
     };
 
     /**

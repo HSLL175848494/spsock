@@ -35,10 +35,11 @@ namespace HSLL
         /**
          * @brief Starts listening on specified port
          * @param port Network port to bind
+         * @param ip Null-terminated string representing IPv4/IPv6 address
          * @return true if listen succeeded, false on error
          * @note One-time call during initialization
          */
-        bool Listen(unsigned short port) SPSOCK_ONE_TIME_CALL;
+        bool Listen(unsigned short port, const char *ip = nullptr) SPSOCK_ONE_TIME_CALL;
 
         /**
          * @brief Enters main event processing loop
@@ -126,10 +127,11 @@ namespace HSLL
         /**
          * @brief Binds socket to network port
          * @param port Network port to bind
+         * @param ip Null-terminated string representing IPv4/IPv6 address
          * @return true if bind succeeded, false on error
          * @note One-time call during initialization
          */
-        bool Bind(unsigned short port) SPSOCK_ONE_TIME_CALL;
+        bool Bind(unsigned short port, const char *ip = nullptr) SPSOCK_ONE_TIME_CALL;
 
         /**
          * @brief Enters datagram processing loop

@@ -3,18 +3,40 @@
 namespace HSLL
 {
     // SOCKADDR_IN Implementation
-    void SOCKADDR_IN<ADDRESS_FAMILY_INET>::INIT(sockaddr_in &address, unsigned short port)
+    bool SOCKADDR_IN<ADDRESS_FAMILY_INET>::INIT(sockaddr_in &address, const char *ip, unsigned short port)
     {
         address.sin_family = AF_INET;
-        address.sin_addr.s_addr = INADDR_ANY;
         address.sin_port = htons(port);
+
+        if (ip != nullptr)
+        {
+            if (inet_pton(AF_INET, ip, &address.sin_addr) != 1)
+                return false;
+        }
+        else
+        {
+            address.sin_addr.s_addr = INADDR_ANY;
+        }
+
+        return true;
     }
 
-    void SOCKADDR_IN<ADDRESS_FAMILY_INET6>::INIT(sockaddr_in6 &address, unsigned short port)
+    bool SOCKADDR_IN<ADDRESS_FAMILY_INET6>::INIT(sockaddr_in6 &address, const char *ip, unsigned short port)
     {
         address.sin6_family = AF_INET6;
-        address.sin6_addr = in6addr_any;
         address.sin6_port = htons(port);
+
+        if (ip != nullptr)
+        {
+            if (inet_pton(AF_INET6, ip, &address.sin6_addr) != 1)
+                return false;
+        }
+        else
+        {
+            address.sin6_addr = in6addr_any;
+        }
+
+        return true;
     }
 
     // TCP Implementation
@@ -460,7 +482,7 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockTcp<address_family>::Listen(unsigned short port)
+    bool SPSockTcp<address_family>::Listen(unsigned short port, const char *ip)
     {
         if ((status & 0x1) == 0x1)
         {
@@ -470,6 +492,12 @@ namespace HSLL
 
         using SOCKADDR = SOCKADDR_IN<address_family>;
         typename SOCKADDR::TYPE addr;
+
+        if (!SOCKADDR::INIT(addr, ip, port))
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "Invalid ipv4 address");
+            return false;
+        }
 
         if ((listenfd = socket(address_family, PROTOCOL_TCP, 0)) == -1)
         {
@@ -487,7 +515,6 @@ namespace HSLL
             return false;
         }
 
-        SOCKADDR::INIT(addr, port);
         if (bind(listenfd, (sockaddr *)&addr, sizeof(addr)) == -1)
         {
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "bind() failed: ", strerror(errno));
@@ -870,11 +897,20 @@ namespace HSLL
     }
 
     template <ADDRESS_FAMILY address_family>
-    bool SPSockUdp<address_family>::Bind(unsigned short port)
+    bool SPSockUdp<address_family>::Bind(unsigned short port, const char *ip)
     {
         if (status & 0x1)
         {
             HSLL_LOGINFO(LOG_LEVEL_ERROR, "Bind() cannot be called multiple times");
+            return false;
+        }
+
+        using SOCKADDR = SOCKADDR_IN<address_family>;
+        typename SOCKADDR::TYPE addr;
+
+        if (!SOCKADDR::INIT(addr, ip, port))
+        {
+            HSLL_LOGINFO(LOG_LEVEL_ERROR, "Invalid ipv6 address");
             return false;
         }
 
@@ -924,10 +960,6 @@ namespace HSLL
                 close(sockfd);
                 break;
             }
-
-            using SOCKADDR = SOCKADDR_IN<address_family>;
-            typename SOCKADDR::TYPE addr;
-            SOCKADDR::INIT(addr, port);
 
             if (bind(sockfd, (sockaddr *)&addr, sizeof(addr)) == -1)
             {
