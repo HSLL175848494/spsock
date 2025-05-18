@@ -3,7 +3,6 @@
 
 #include <new>
 #include <mutex>
-#include <atomic>
 #include <chrono>
 #include <condition_variable>
 
