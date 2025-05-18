@@ -19,159 +19,116 @@ namespace HSLL
 #endif
 
 	/**
-	 * @brief Thread-safe fixed-size block queue with blocking operations
-	 * @tparam TYPE Type of elements stored in the queue
-	 * @details Implements a producer-consumer pattern using:
-	 *          - Preallocated node pool for memory efficiency
-	 *          - Double-linked lists for data and free nodes
-	 *          - Separate mutexes for data and free lists
-	 *          - Condition variables for flow control
+	 * @brief Helper template for conditional object destruction
+	 * @tparam T Type of object to manage
+	 * @tparam IsTrivial Boolean indicating if type is trivially destructible
+	 * @details Provides destruction mechanism that respects type traits:
+	 *          - For non-trivial types: calls object destructor explicitly
+	 *          - For trivial types: no-operation
+	 */
+	template <typename T, bool IsTrivial = std::is_trivially_destructible<T>::value>
+	struct DestroyHelper {
+		static void destroy(T& obj) { obj.~T(); }
+	};
+
+	/**
+	 * @brief Specialization for trivially destructible types
+	 */
+	template <typename T>
+	struct DestroyHelper<T, true> {
+		static void destroy(T&) {}
+	};
+
+	/**
+	 * @brief Conditionally destroys an object based on its type traits
+	 * @tparam T Type of the object to potentially destroy
+	 * @param obj Reference to the object being managed
+	 * @details Uses DestroyHelper to decide whether to call destructor:
+	 *          - Calls destructor for non-trivial types
+	 *          - No action for trivial types
+	 */
+	template <typename T>
+	void conditional_destroy(T& obj) {
+		DestroyHelper<T>::destroy(obj);
+	}
+
+	/**
+	 * @brief Circular buffer based blocking queue implementation
+	 * @tparam TYPE Element type stored in the queue
+	 * @details Features:
+	 *          - Fixed-size circular buffer using preallocated nodes
+	 *          - Single mutex design for all operations
+	 *          - Size tracking for quick capacity checks
+	 *          - Optimized for types with trivial destructors
+	 *          - Efficient memory layout for cache locality
 	 */
 	template <class TYPE>
 	class BlockQueue
 	{
 	private:
-		/**
-		 * @brief Internal node structure for element storage
-		 */
+
 		struct Node
 		{
-			TYPE data;	///< Storage for element data
-			Node *prev; ///< Pointer to previous node in list
-			Node *next; ///< Pointer to next node in list
-
-			/**
-			 * @brief Constructs an empty node
-			 */
-			Node() : prev(nullptr), next(nullptr) {}
+			TYPE data;  ///< Storage for element data
+			Node* next; ///< Pointer to next node in circular list
+			Node() = default;
 		};
 
 		// Memory management
-		void *memoryBlock;			 ///< Raw memory block for node storage
-		bool isInitialized;			 ///< Flag indicating successful initialization
-		unsigned int maxSize;		 ///< Maximum capacity of the queue
-		std::atomic<bool> isStopped; ///< Atomic flag for stopping all operations
+		void* memoryBlock;             ///< Raw memory block for node storage
+		unsigned int isStopped;	       ///< Flag for stopping all operations
 
-		// List management
-		Node *freeListHead; ///< Head of available nodes list
-		Node *dataListHead; ///< Head of active data list
-		Node *dataListTail; ///< Tail of active data list
+		// Queue state tracking
+		unsigned int size;             ///< Current number of elements in queue
+		unsigned int maxSize;          ///< Maximum capacity of the queue
+
+		// List pointers
+		Node* dataListHead;            ///< Pointer to first element in queue
+		Node* dataListTail;            ///< Pointer to next insertion position
 
 		// Synchronization primitives
-		std::mutex dataMutex;				  ///< Mutex protecting data list operations
-		std::mutex freeListMutex;			  ///< Mutex protecting free list operations
+		std::mutex dataMutex;          ///< Mutex protecting all queue operations
 		std::condition_variable notEmptyCond; ///< Signaled when data becomes available
 		std::condition_variable notFullCond;  ///< Signaled when space becomes available
 
-		/**
-		 * @brief Allocates a single node from free list (no locking)
-		 * @return Pointer to allocated node or nullptr if free list is empty
-		 */
-		Node *allocateNodeUnsafe()
-		{
-			if (UNLIKELY(!freeListHead))
-				return nullptr;
-
-			Node *node = freeListHead;
-			freeListHead = node->next;
-			if (LIKELY(freeListHead))
-				freeListHead->prev = nullptr;
-
-			return node;
-		}
-
-		/**
-		 * @brief Allocates multiple contiguous nodes from free list (no locking)
-		 * @param count Number of nodes to allocate
-		 * @return Head node of allocated chain or nullptr if not enough nodes
-		 */
-		Node *allocateNodesUnsafe(unsigned int count)
-		{
-			if (UNLIKELY(!freeListHead || count == 0))
-				return nullptr;
-
-			Node *head = freeListHead;
-			Node *tail = head;
-			unsigned int allocated = 1;
-
-			while (LIKELY(allocated < count && tail->next))
-			{
-				tail = tail->next;
-				allocated++;
-			}
-
-			freeListHead = tail->next;
-			if (LIKELY(freeListHead))
-				freeListHead->prev = nullptr;
-
-			tail->next = nullptr;
-			return head;
-		}
-
-		/**
-		 * @brief Recycles nodes back to free list (no locking)
-		 * @param head First node in the chain to recycle
-		 * @param tail Last node in the chain to recycle
-		 */
-		void recycleNodesUnsafe(Node *head, Node *tail)
-		{
-			if (UNLIKELY(!head || !tail))
-				return;
-
-			tail->next = freeListHead;
-			if (LIKELY(freeListHead))
-				freeListHead->prev = tail;
-
-			freeListHead = head;
-			head->prev = nullptr;
-		}
-
 	public:
-		/**
-		 * @brief Constructs an uninitialized queue
-		 */
-		BlockQueue() : memoryBlock(nullptr),
-					   freeListHead(nullptr),
-					   dataListHead(nullptr),
-					   dataListTail(nullptr),
-					   isInitialized(false),
-					   isStopped(false),
-					   maxSize(0) {}
 
-		/**
-		 * @brief Destroys queue and releases all resources
-		 */
-		~BlockQueue()
-		{
-			release();
-		}
+		BlockQueue()
+			: memoryBlock(nullptr),
+			isStopped(0) {}
+
+		~BlockQueue() { release(); }
 
 		/**
 		 * @brief Initializes queue with fixed capacity
 		 * @param capacity Maximum number of elements the queue can hold
 		 * @return true if initialization succeeded, false otherwise
-		 * @details Preallocates all required memory and builds initial free list
+		 * @details Creates circular linked list from preallocated nodes
 		 */
 		bool init(unsigned int capacity)
 		{
-			if (UNLIKELY(isInitialized || capacity == 0))
+			if (memoryBlock || capacity == 0)
 				return false;
 
-			memoryBlock = ::operator new(sizeof(Node) * capacity, std::nothrow);
-			if (UNLIKELY(!memoryBlock))
+#if defined(_WIN32)
+			memoryBlock = _aligned_malloc(sizeof(Node) * capacity, 64);
+#else
+			memoryBlock = aligned_alloc(64, sizeof(Node) * capacity);
+#endif
+
+			if (!memoryBlock)
 				return false;
 
-			Node *nodes = (Node *)(memoryBlock);
-			freeListHead = &nodes[0];
+			Node* nodes = (Node*)(memoryBlock);
 
-			for (unsigned i = 0; i < capacity; ++i)
-			{
-				nodes[i].prev = (i == 0) ? nullptr : &nodes[i - 1];
-				nodes[i].next = (i == capacity - 1) ? nullptr : &nodes[i + 1];
-			}
+			for (unsigned int i = 0; i < capacity - 1; ++i)
+				nodes[i].next = &nodes[i + 1];
+			nodes[capacity - 1].next = &nodes[0];
 
+			size = 0;
 			maxSize = capacity;
-			isInitialized = true;
+			dataListHead = nodes;
+			dataListTail = nodes;
 			return true;
 		}
 
@@ -182,29 +139,17 @@ namespace HSLL
 		 * @return true if element was added, false if queue was full
 		 */
 		template <class T>
-		bool push(T &&element)
+		bool push(T&& element)
 		{
-			std::unique_lock<std::mutex> freeLock(freeListMutex);
-			Node *node = allocateNodeUnsafe();
-			freeLock.unlock();
+			std::unique_lock<std::mutex> lock(dataMutex);
 
-			if (UNLIKELY(!node))
+			if (UNLIKELY(size == maxSize))
 				return false;
 
-			new (&node->data) TYPE(std::forward<T>(element));
-
-			{
-				std::lock_guard<std::mutex> dataLock(dataMutex);
-				node->prev = dataListTail;
-				node->next = nullptr;
-
-				if (LIKELY(dataListTail))
-					dataListTail->next = node;
-				else
-					dataListHead = node;
-				dataListTail = node;
-			}
-
+			new (&dataListTail->data) TYPE(std::forward<T>(element));
+			size++;
+			dataListTail = dataListTail->next;
+			lock.unlock();
 			notEmptyCond.notify_one();
 			return true;
 		}
@@ -216,32 +161,20 @@ namespace HSLL
 		 * @return true if element was added, false if queue was stopped
 		 */
 		template <class T>
-		bool wait_push(T &&element)
+		bool wait_push(T&& element)
 		{
-			Node *node = nullptr;
-			{
-				std::unique_lock<std::mutex> lock(freeListMutex);
-				notFullCond.wait(lock, [this]
-								 { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(freeListHead != nullptr); });
-				if (UNLIKELY(isStopped.load(std::memory_order_acquire)))
-					return false;
-				node = allocateNodeUnsafe();
-			}
+			std::unique_lock<std::mutex> lock(dataMutex);
+			notFullCond.wait(lock, [this] {
+				return LIKELY(size != maxSize) || UNLIKELY(isStopped);
+				});
 
-			new (&node->data) TYPE(std::forward<T>(element));
+			if (UNLIKELY(size == maxSize))
+				return false;
 
-			{
-				std::lock_guard<std::mutex> lock(dataMutex);
-				node->prev = dataListTail;
-				node->next = nullptr;
-
-				if (LIKELY(dataListTail))
-					dataListTail->next = node;
-				else
-					dataListHead = node;
-				dataListTail = node;
-			}
-
+			new (&dataListTail->data) TYPE(std::forward<T>(element));
+			size++;
+			dataListTail = dataListTail->next;
+			lock.unlock();
 			notEmptyCond.notify_one();
 			return true;
 		}
@@ -256,33 +189,20 @@ namespace HSLL
 		 * @return true if element was added, false on timeout or stop
 		 */
 		template <class T, class Rep, class Period>
-		bool wait_push(T &&element, const std::chrono::duration<Rep, Period> &timeout)
+		bool wait_push(T&& element, const std::chrono::duration<Rep, Period>& timeout)
 		{
-			Node *node = nullptr;
-			{
-				std::unique_lock<std::mutex> lock(freeListMutex);
-				if (!notFullCond.wait_for(lock, timeout, [this]
-										  { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(freeListHead != nullptr); }))
-					return false;
-				if (UNLIKELY(isStopped.load(std::memory_order_acquire)))
-					return false;
-				node = allocateNodeUnsafe();
-			}
+			std::unique_lock<std::mutex> lock(dataMutex);
+			bool success = notFullCond.wait_for(lock, timeout, [this] {
+				return LIKELY(size != maxSize) || UNLIKELY(isStopped);
+				});
 
-			new (&node->data) TYPE(std::forward<T>(element));
+			if (UNLIKELY(!success || size == maxSize))
+				return false;
 
-			{
-				std::lock_guard<std::mutex> lock(dataMutex);
-				node->prev = dataListTail;
-				node->next = nullptr;
-
-				if (LIKELY(dataListTail))
-					dataListTail->next = node;
-				else
-					dataListHead = node;
-				dataListTail = node;
-			}
-
+			new (&dataListTail->data) TYPE(std::forward<T>(element));
+			size++;
+			dataListTail = dataListTail->next;
+			lock.unlock();
 			notEmptyCond.notify_one();
 			return true;
 		}
@@ -292,30 +212,18 @@ namespace HSLL
 		 * @param element Reference to store popped element
 		 * @return true if element was retrieved, false if queue was empty
 		 */
-		bool pop(TYPE &element)
+		bool pop(TYPE& element)
 		{
-			Node *node = nullptr;
-			{
-				std::unique_lock<std::mutex> lock(dataMutex);
-				if (UNLIKELY(!dataListHead))
-					return false;
+			std::unique_lock<std::mutex> lock(dataMutex);
 
-				node = dataListHead;
-				dataListHead = node->next;
-				if (LIKELY(dataListHead))
-					dataListHead->prev = nullptr;
-				else
-					dataListTail = nullptr;
-			}
+			if (UNLIKELY(!size))
+				return false;
 
-			element = std::move(node->data);
-			node->data.~TYPE();
-
-			{
-				std::lock_guard<std::mutex> lock(freeListMutex);
-				recycleNodesUnsafe(node, node);
-			}
-
+			size--;
+			element = std::move(dataListHead->data);
+			conditional_destroy(dataListHead->data);
+			dataListHead = dataListHead->next;
+			lock.unlock();
 			notFullCond.notify_one();
 			return true;
 		}
@@ -325,32 +233,21 @@ namespace HSLL
 		 * @param element Reference to store popped element
 		 * @return true if element was retrieved, false if queue was stopped
 		 */
-		bool wait_pop(TYPE &element)
+		bool wait_pop(TYPE& element)
 		{
-			Node *node = nullptr;
-			{
-				std::unique_lock<std::mutex> lock(dataMutex);
-				notEmptyCond.wait(lock, [this]
-								  { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(dataListHead != nullptr); });
-				if (UNLIKELY(!dataListHead))
-					return false;
+			std::unique_lock<std::mutex> lock(dataMutex);
+			notEmptyCond.wait(lock, [this] {
+				return LIKELY(size) || UNLIKELY(isStopped);
+				});
 
-				node = dataListHead;
-				dataListHead = node->next;
-				if (LIKELY(dataListHead))
-					dataListHead->prev = nullptr;
-				else
-					dataListTail = nullptr;
-			}
+			if (UNLIKELY(!size))
+				return false;
 
-			element = std::move(node->data);
-			node->data.~TYPE();
-
-			{
-				std::lock_guard<std::mutex> lock(freeListMutex);
-				recycleNodesUnsafe(node, node);
-			}
-
+			size--;
+			element = std::move(dataListHead->data);
+			conditional_destroy(dataListHead->data);
+			dataListHead = dataListHead->next;
+			lock.unlock();
 			notFullCond.notify_one();
 			return true;
 		}
@@ -364,33 +261,21 @@ namespace HSLL
 		 * @return true if element was retrieved, false on timeout or stop
 		 */
 		template <class Rep, class Period>
-		bool wait_pop(TYPE &element, const std::chrono::duration<Rep, Period> &timeout)
+		bool wait_pop(TYPE& element, const std::chrono::duration<Rep, Period>& timeout)
 		{
-			Node *node = nullptr;
-			{
-				std::unique_lock<std::mutex> lock(dataMutex);
-				if (!notEmptyCond.wait_for(lock, timeout, [this]
-										   { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(dataListHead != nullptr); }))
-					return false;
-				if (UNLIKELY(!dataListHead))
-					return false;
+			std::unique_lock<std::mutex> lock(dataMutex);
+			bool success = notEmptyCond.wait_for(lock, timeout, [this] {
+				return LIKELY(size) || UNLIKELY(isStopped);
+				});
 
-				node = dataListHead;
-				dataListHead = node->next;
-				if (LIKELY(dataListHead))
-					dataListHead->prev = nullptr;
-				else
-					dataListTail = nullptr;
-			}
+			if (UNLIKELY(!success || !size))
+				return false;
 
-			element = std::move(node->data);
-			node->data.~TYPE();
-
-			{
-				std::lock_guard<std::mutex> lock(freeListMutex);
-				recycleNodesUnsafe(node, node);
-			}
-
+			size--;
+			element = std::move(dataListHead->data);
+			conditional_destroy(dataListHead->data);
+			dataListHead = dataListHead->next;
+			lock.unlock();
 			notFullCond.notify_one();
 			return true;
 		}
@@ -401,46 +286,33 @@ namespace HSLL
 		 * @param count Number of elements to push
 		 * @return Actual number of elements pushed
 		 */
-		unsigned int pushBulk(TYPE *elements, unsigned int count)
+		unsigned int pushBulk(TYPE* elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
-			std::unique_lock<std::mutex> freeLock(freeListMutex);
-			Node *head = allocateNodesUnsafe(count);
-			freeLock.unlock();
+			std::unique_lock<std::mutex> lock(dataMutex);
+			unsigned int available = maxSize - size;
 
-			if (UNLIKELY(!head))
+			if (UNLIKELY(available == 0))
 				return 0;
 
-			Node *current = head;
-			Node *tail = nullptr;
-			unsigned actualCount = 0;
-
-			for (; LIKELY(actualCount < count && current); ++actualCount)
+			unsigned int toPush = std::min(count, available);
+			for (unsigned int i = 0; i < toPush; ++i)
 			{
-				new (&current->data) TYPE(std::move(elements[actualCount]));
-				tail = current;
-				current = current->next;
+				new (&dataListTail->data) TYPE(std::move(elements[i]));
+				dataListTail = dataListTail->next;
 			}
 
-			{
-				std::lock_guard<std::mutex> dataLock(dataMutex);
-				if (LIKELY(dataListTail))
-				{
-					dataListTail->next = head;
-					head->prev = dataListTail;
-				}
-				else
-				{
-					dataListHead = head;
-					head->prev = nullptr;
-				}
-				dataListTail = tail;
-			}
+			size += toPush;
+			lock.unlock();
 
-			notEmptyCond.notify_all();
-			return actualCount;
+			if (LIKELY(toPush == 1))
+				notEmptyCond.notify_one();
+			else
+				notEmptyCond.notify_all();
+
+			return toPush;
 		}
 
 		/**
@@ -449,70 +321,36 @@ namespace HSLL
 		 * @param count Number of elements to push
 		 * @return Actual number of elements pushed before stop
 		 */
-		unsigned int wait_pushBulk(TYPE *elements, unsigned int count)
+		unsigned int wait_pushBulk(TYPE* elements, unsigned int count)
 		{
-			if (UNLIKELY(count == 0) || UNLIKELY(isStopped.load(std::memory_order_acquire)))
+			if (UNLIKELY(count == 0))
 				return 0;
 
-			unsigned int pushed = 0;
+			std::unique_lock<std::mutex> lock(dataMutex);
+			notFullCond.wait(lock, [this] {
+				return LIKELY(size != maxSize) || UNLIKELY(isStopped);
+				});
 
-			while (LIKELY(pushed < count) && LIKELY(!isStopped.load(std::memory_order_acquire)))
+			if (UNLIKELY(size == maxSize))
+				return 0;
+
+			unsigned int available = maxSize - size;
+			unsigned int toPush = std::min(count, available);
+			for (unsigned int i = 0; i < toPush; ++i)
 			{
-				Node *head = nullptr;
-				unsigned allocated = 0;
-
-				{
-					std::unique_lock<std::mutex> lock(freeListMutex);
-					notFullCond.wait(lock, [this]
-									 { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(freeListHead != nullptr); });
-					if (UNLIKELY(isStopped.load(std::memory_order_acquire)))
-						break;
-
-					unsigned remaining = count - pushed;
-					head = allocateNodesUnsafe(remaining);
-					if (UNLIKELY(!head))
-						continue;
-
-					allocated = 1;
-					Node *tail = head;
-					while (LIKELY(tail->next && allocated < remaining))
-					{
-						tail = tail->next;
-						allocated++;
-					}
-				}
-
-				Node *current = head;
-				for (unsigned i = 0; LIKELY(i < allocated); ++i)
-				{
-					new (&current->data) TYPE(std::move(elements[pushed + i]));
-					current = current->next;
-				}
-
-				{
-					std::lock_guard<std::mutex> dataLock(dataMutex);
-					Node *tailNode = head;
-					for (unsigned j = 1; LIKELY(j < allocated && tailNode->next); ++j)
-						tailNode = tailNode->next;
-
-					if (LIKELY(dataListTail))
-					{
-						dataListTail->next = head;
-						head->prev = dataListTail;
-						dataListTail = tailNode;
-					}
-					else
-					{
-						dataListHead = head;
-						dataListTail = tailNode;
-					}
-				}
-
-				pushed += allocated;
-				notEmptyCond.notify_all();
+				new (&dataListTail->data) TYPE(std::move(elements[i]));
+				dataListTail = dataListTail->next;
 			}
 
-			return pushed;
+			size += toPush;
+			lock.unlock();
+
+			if (LIKELY(toPush == 1))
+				notEmptyCond.notify_one();
+			else
+				notEmptyCond.notify_all();
+
+			return toPush;
 		}
 
 		/**
@@ -525,70 +363,36 @@ namespace HSLL
 		 * @return Actual number of elements pushed
 		 */
 		template <class Rep, class Period>
-		unsigned int wait_pushBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
+		unsigned int wait_pushBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
-			auto deadline = std::chrono::steady_clock::now() + timeout;
-			unsigned int pushed = 0;
+			std::unique_lock<std::mutex> lock(dataMutex);
+			bool success = notFullCond.wait_for(lock, timeout, [this] {
+				return LIKELY(size != maxSize) || UNLIKELY(isStopped);
+				});
 
-			while (LIKELY(pushed < count) && LIKELY(!isStopped.load(std::memory_order_acquire)))
+			if (UNLIKELY(!success || size == maxSize))
+				return 0;
+
+			unsigned int available = maxSize - size;
+			unsigned int toPush = std::min(count, available);
+			for (unsigned int i = 0; i < toPush; ++i)
 			{
-				Node *head = nullptr;
-				unsigned allocated = 0;
-				{
-					std::unique_lock<std::mutex> lock(freeListMutex);
-					if (!notFullCond.wait_until(lock, deadline, [this]
-												{ return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(freeListHead != nullptr); }))
-						break;
-					if (UNLIKELY(isStopped.load(std::memory_order_acquire)))
-						break;
-
-					unsigned remaining = count - pushed;
-					head = allocateNodesUnsafe(remaining);
-					if (UNLIKELY(!head))
-						continue;
-
-					allocated = 1;
-					Node *tail = head;
-					while (LIKELY(tail->next && allocated < remaining))
-					{
-						tail = tail->next;
-						allocated++;
-					}
-				}
-
-				Node *current = head;
-				for (unsigned i = 0; LIKELY(i < allocated); ++i)
-				{
-					new (&current->data) TYPE(std::move(elements[pushed + i]));
-					current = current->next;
-				}
-
-				{
-					std::lock_guard<std::mutex> dataLock(dataMutex);
-					Node *tailNode = head;
-					for (unsigned j = 1; LIKELY(j < allocated && tailNode->next); ++j)
-						tailNode = tailNode->next;
-
-					if (LIKELY(dataListTail))
-					{
-						dataListTail->next = head;
-						head->prev = dataListTail;
-						dataListTail = tailNode;
-					}
-					else
-					{
-						dataListHead = head;
-						dataListTail = tailNode;
-					}
-				}
-
-				pushed += allocated;
-				notEmptyCond.notify_all();
+				new (&dataListTail->data) TYPE(std::move(elements[i]));
+				dataListTail = dataListTail->next;
 			}
-			return pushed;
+
+			size += toPush;
+			lock.unlock();
+
+			if (LIKELY(toPush == 1))
+				notEmptyCond.notify_one();
+			else
+				notEmptyCond.notify_all();
+
+			return toPush;
 		}
 
 		/**
@@ -597,177 +401,114 @@ namespace HSLL
 		 * @param count Maximum number of elements to retrieve
 		 * @return Actual number of elements retrieved
 		 */
-		unsigned int popBulk(TYPE *elements, unsigned int count)
+		unsigned int popBulk(TYPE* elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
-			Node *head = nullptr;
-			Node *tail = nullptr;
-			unsigned actualCount = 0;
+			std::unique_lock<std::mutex> lock(dataMutex);
+			unsigned int available = size;
 
+			if (UNLIKELY(available == 0))
+				return 0;
+
+			unsigned int toPop = std::min(count, available);
+			for (unsigned int i = 0; i < toPop; ++i)
 			{
-				std::unique_lock<std::mutex> lock(dataMutex);
-				if (UNLIKELY(!dataListHead))
-					return 0;
-
-				head = dataListHead;
-				tail = head;
-				actualCount = 1;
-
-				while (LIKELY(tail->next && actualCount < count))
-				{
-					tail = tail->next;
-					actualCount++;
-				}
-
-				dataListHead = tail->next;
-				if (LIKELY(dataListHead))
-					dataListHead->prev = nullptr;
-				else
-					dataListTail = nullptr;
+				elements[i] = std::move(dataListHead->data);
+				conditional_destroy(dataListHead->data);
+				dataListHead = dataListHead->next;
 			}
 
-			Node *current = head;
-			for (unsigned i = 0; LIKELY(i < actualCount); ++i)
-			{
-				elements[i] = std::move(current->data);
-				current->data.~TYPE();
-				current = current->next;
-			}
+			size -= toPop;
+			lock.unlock();
 
-			{
-				std::lock_guard<std::mutex> lock(freeListMutex);
-				recycleNodesUnsafe(head, tail);
-			}
+			if (LIKELY(toPop == 1))
+				notFullCond.notify_one();
+			else
+				notFullCond.notify_all();
 
-			notFullCond.notify_all();
-			return actualCount;
+			return toPop;
 		}
 
 		/**
-		 * @brief Blocking bulk retrieval with indefinite wait (returns as soon as any elements are available)
+		 * @brief Blocking bulk retrieval with indefinite wait
 		 * @param elements Array to store retrieved elements
 		 * @param count Maximum number of elements to retrieve
 		 * @return Actual number of elements retrieved before stop
-		 * @details This version returns immediately after the first successful wait, getting as many elements
-		 *          as are currently available (up to count), rather than waiting to fill the full count
 		 */
-		unsigned int wait_popBulk(TYPE *elements, unsigned int count)
+		unsigned int wait_popBulk(TYPE* elements, unsigned int count)
 		{
-			if (UNLIKELY(count == 0) || UNLIKELY(isStopped.load(std::memory_order_acquire)))
+			if (UNLIKELY(count == 0))
 				return 0;
 
-			Node *head = nullptr;
-			Node *tail = nullptr;
-			unsigned int allocated = 0;
+			std::unique_lock<std::mutex> lock(dataMutex);
+			notEmptyCond.wait(lock, [this] {
+				return LIKELY(size) || UNLIKELY(isStopped);
+				});
 
+			if (UNLIKELY(!size))
+				return 0;
+
+			unsigned int toPop = std::min(count, size);
+			for (unsigned int i = 0; i < toPop; ++i)
 			{
-				std::unique_lock<std::mutex> lock(dataMutex);
-				notEmptyCond.wait(lock, [this]
-								  { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(dataListHead != nullptr); });
-
-				if (UNLIKELY(!dataListHead))
-					return 0;
-
-				head = dataListHead;
-				tail = head;
-				allocated = 1;
-
-				while (LIKELY(tail->next && allocated < count))
-				{
-					tail = tail->next;
-					allocated++;
-				}
-
-				dataListHead = tail->next;
-				if (LIKELY(dataListHead))
-					dataListHead->prev = nullptr;
-				else
-					dataListTail = nullptr;
+				elements[i] = std::move(dataListHead->data);
+				conditional_destroy(dataListHead->data);
+				dataListHead = dataListHead->next;
 			}
 
-			Node *current = head;
-			for (unsigned i = 0; LIKELY(i < allocated); ++i)
-			{
-				elements[i] = std::move(current->data);
-				current->data.~TYPE();
-				current = current->next;
-			}
+			size -= toPop;
+			lock.unlock();
 
-			{
-				std::lock_guard<std::mutex> lock(freeListMutex);
-				recycleNodesUnsafe(head, tail);
-			}
+			if (LIKELY(toPop == 1))
+				notFullCond.notify_one();
+			else
+				notFullCond.notify_all();
 
-			notFullCond.notify_all();
-			return allocated;
+			return toPop;
 		}
 
 		/**
-		 * @brief Blocking bulk retrieval with timeout (returns as soon as any elements are available)
+		 * @brief Blocking bulk retrieval with timeout
 		 * @tparam Rep Chrono duration representation type
 		 * @tparam Period Chrono duration period type
 		 * @param elements Array to store retrieved elements
 		 * @param count Maximum number of elements to retrieve
 		 * @param timeout Maximum time to wait for data
 		 * @return Actual number of elements retrieved
-		 * @details This version returns immediately after the first successful wait, getting as many elements
-		 *          as are currently available (up to count), rather than waiting to fill the full count
 		 */
 		template <class Rep, class Period>
-		unsigned int wait_popBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
+		unsigned int wait_popBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
-			Node *head = nullptr;
-			Node *tail = nullptr;
-			unsigned int allocated = 0;
+			std::unique_lock<std::mutex> lock(dataMutex);
+			bool success = notEmptyCond.wait_for(lock, timeout, [this] {
+				return LIKELY(size) || UNLIKELY(isStopped);
+				});
 
+			if (UNLIKELY(!success || !size))
+				return 0;
+
+			unsigned int toPop = std::min(count, size);
+			for (unsigned int i = 0; i < toPop; ++i)
 			{
-				std::unique_lock<std::mutex> lock(dataMutex);
-				if (!notEmptyCond.wait_for(lock, timeout, [this]
-										   { return UNLIKELY(isStopped.load(std::memory_order_acquire)) || LIKELY(dataListHead != nullptr); }))
-				{
-					return 0;
-				}
-
-				if (UNLIKELY(!dataListHead))
-					return 0;
-
-				head = dataListHead;
-				tail = head;
-				allocated = 1;
-
-				while (LIKELY(tail->next && allocated < count))
-				{
-					tail = tail->next;
-					allocated++;
-				}
-
-				dataListHead = tail->next;
-				if (LIKELY(dataListHead))
-					dataListHead->prev = nullptr;
-				else
-					dataListTail = nullptr;
+				elements[i] = std::move(dataListHead->data);
+				conditional_destroy(dataListHead->data);
+				dataListHead = dataListHead->next;
 			}
 
-			Node *current = head;
-			for (unsigned i = 0; LIKELY(i < allocated); ++i)
-			{
-				elements[i] = std::move(current->data);
-				current->data.~TYPE();
-				current = current->next;
-			}
+			size -= toPop;
+			lock.unlock();
 
-			{
-				std::lock_guard<std::mutex> lock(freeListMutex);
-				recycleNodesUnsafe(head, tail);
-			}
+			if (LIKELY(toPop == 1))
+				notFullCond.notify_one();
+			else
+				notFullCond.notify_all();
 
-			notFullCond.notify_all();
-			return allocated;
+			return toPop;
 		}
 
 		/**
@@ -776,36 +517,46 @@ namespace HSLL
 		 */
 		void stopWait()
 		{
-			isStopped.store(true, std::memory_order_release);
+			{
+				std::lock_guard<std::mutex> lock(dataMutex);
+				isStopped = 1;
+			}
+
 			notEmptyCond.notify_all();
 			notFullCond.notify_all();
 		}
 
 		/**
 		 * @brief Releases all resources and resets queue state
-		 * @details Destroys elements, frees memory, and resets to initial state
+		 * @details Frees memory block and resets to initial state
 		 */
 		void release()
 		{
-			stopWait();
-
-			Node *current = dataListHead;
-			while (current)
+			if (memoryBlock)
 			{
-				current->data.~TYPE();
-				current = current->next;
-			}
+				Node* nodes = (Node*)memoryBlock;
+				Node* current = dataListHead;
 
-			if (LIKELY(memoryBlock))
-			{
-				::operator delete(memoryBlock);
+				for (unsigned int i = 0; i < size; ++i)
+				{
+					conditional_destroy(current->data);
+					current = current->next;
+				}
+
+#if defined(_WIN32)
+				_aligned_free(memoryBlock);
+#else
+				free(memoryBlock);
+#endif
+
+				isStopped = 0;
 				memoryBlock = nullptr;
 			}
 		}
 
 		// Disable copying
-		BlockQueue(const BlockQueue &) = delete;
-		BlockQueue &operator=(const BlockQueue &) = delete;
+		BlockQueue(const BlockQueue&) = delete;
+		BlockQueue& operator=(const BlockQueue&) = delete;
 	};
 }
 #endif // HSLL_BLOCKQUEUE
