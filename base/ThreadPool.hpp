@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <thread>
+#include <atomic>
 #include "BlockQueue.hpp"
 
 namespace HSLL
