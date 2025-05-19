@@ -26,16 +26,18 @@ namespace HSLL
 	 *          - For trivial types: no-operation
 	 */
 	template <typename T, bool IsTrivial = std::is_trivially_destructible<T>::value>
-	struct DestroyHelper {
-		static void destroy(T& obj) { obj.~T(); }
+	struct DestroyHelper
+	{
+		static void destroy(T &obj) { obj.~T(); }
 	};
 
 	/**
 	 * @brief Specialization for trivially destructible types
 	 */
 	template <typename T>
-	struct DestroyHelper<T, true> {
-		static void destroy(T&) {}
+	struct DestroyHelper<T, true>
+	{
+		static void destroy(T &) {}
 	};
 
 	/**
@@ -47,7 +49,8 @@ namespace HSLL
 	 *          - No action for trivial types
 	 */
 	template <typename T>
-	void conditional_destroy(T& obj) {
+	void conditional_destroy(T &obj)
+	{
 		DestroyHelper<T>::destroy(obj);
 	}
 
@@ -65,36 +68,34 @@ namespace HSLL
 	class BlockQueue
 	{
 	private:
-
 		struct Node
 		{
-			TYPE data;  ///< Storage for element data
-			Node* next; ///< Pointer to next node in circular list
+			TYPE data;	///< Storage for element data
+			Node *next; ///< Pointer to next node in circular list
 			Node() = default;
 		};
 
 		// Memory management
-		void* memoryBlock;             ///< Raw memory block for node storage
-		unsigned int isStopped;	       ///< Flag for stopping all operations
+		void *memoryBlock;		///< Raw memory block for node storage
+		unsigned int isStopped; ///< Flag for stopping all operations
 
 		// Queue state tracking
-		unsigned int size;             ///< Current number of elements in queue
-		unsigned int maxSize;          ///< Maximum capacity of the queue
+		unsigned int size;	  ///< Current number of elements in queue
+		unsigned int maxSize; ///< Maximum capacity of the queue
 
 		// List pointers
-		Node* dataListHead;            ///< Pointer to first element in queue
-		Node* dataListTail;            ///< Pointer to next insertion position
+		Node *dataListHead; ///< Pointer to first element in queue
+		Node *dataListTail; ///< Pointer to next insertion position
 
 		// Synchronization primitives
-		std::mutex dataMutex;          ///< Mutex protecting all queue operations
+		std::mutex dataMutex;				  ///< Mutex protecting all queue operations
 		std::condition_variable notEmptyCond; ///< Signaled when data becomes available
 		std::condition_variable notFullCond;  ///< Signaled when space becomes available
 
 	public:
-
 		BlockQueue()
 			: memoryBlock(nullptr),
-			isStopped(0) {}
+			  isStopped(0) {}
 
 		~BlockQueue() { release(); }
 
@@ -118,7 +119,7 @@ namespace HSLL
 			if (!memoryBlock)
 				return false;
 
-			Node* nodes = (Node*)(memoryBlock);
+			Node *nodes = (Node *)(memoryBlock);
 
 			for (unsigned int i = 0; i < capacity - 1; ++i)
 				nodes[i].next = &nodes[i + 1];
@@ -132,13 +133,357 @@ namespace HSLL
 		}
 
 		/**
+		 * @brief Non-blocking element emplacement with perfect forwarding
+		 * @tparam Args Types of arguments to forward to element constructor
+		 * @param args Arguments to forward to element constructor
+		 * @return true if element was emplaced, false if queue was full
+		 * @details Constructs element in-place at the tail of the queue using
+		 *          perfect forwarding. Notifies consumers if successful.
+		 */
+		template <typename... Args>
+		bool emplace(Args &&...args)
+		{
+			std::unique_lock<std::mutex> lock(dataMutex);
+			if (UNLIKELY(size == maxSize))
+				return false;
+
+			new (&dataListTail->data) TYPE(std::forward<Args>(args)...);
+			size++;
+			dataListTail = dataListTail->next;
+			lock.unlock();
+			notEmptyCond.notify_one();
+			return true;
+		}
+
+		/**
+		 * @brief Blocking element emplacement with indefinite wait
+		 * @tparam Args Types of arguments to forward to element constructor
+		 * @param args Arguments to forward to element constructor
+		 * @return true if element was emplaced, false if queue was stopped
+		 * @details Waits until queue has space or is stopped. Constructs element
+		 *          in-place and notifies consumers upon success.
+		 */
+		template <typename... Args>
+		bool wait_emplace(Args &&...args)
+		{
+			std::unique_lock<std::mutex> lock(dataMutex);
+			notFullCond.wait(lock, [this]
+							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(size == maxSize))
+				return false;
+
+			new (&dataListTail->data) TYPE(std::forward<Args>(args)...);
+			size++;
+			dataListTail = dataListTail->next;
+			lock.unlock();
+			notEmptyCond.notify_one();
+			return true;
+		}
+
+		/**
+		 * @brief Blocking element emplacement with timeout
+		 * @tparam Rep Chrono duration representation type
+		 * @tparam Period Chrono duration period type
+		 * @tparam Args Types of arguments to forward to element constructor
+		 * @param timeout Maximum duration to wait for space
+		 * @param args Arguments to forward to element constructor
+		 * @return true if element was emplaced, false on timeout or stop
+		 * @details Waits up to specified duration for space. Constructs element
+		 *          in-place if space becomes available and notifies consumers.
+		 */
+		template <class Rep, class Period, typename... Args>
+		bool wait_emplace(const std::chrono::duration<Rep, Period> &timeout, Args &&...args)
+		{
+			std::unique_lock<std::mutex> lock(dataMutex);
+			bool success = notFullCond.wait_for(lock, timeout, [this]
+												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!success || size == maxSize))
+				return false;
+
+			new (&dataListTail->data) TYPE(std::forward<Args>(args)...);
+			size++;
+			dataListTail = dataListTail->next;
+			lock.unlock();
+			notEmptyCond.notify_one();
+			return true;
+		}
+
+		/**
+		 * @brief Non-blocking bulk construction from parameters array
+		 * @tparam PACKAGE Type of construction arguments for TYPE
+		 * @param packages Pointer to array of construction arguments
+		 * @param count Number of elements to construct
+		 * @return Actual number of elements successfully created
+		 * @details Constructs elements using TYPE's constructor that accepts PACKAGE.
+		 *          Copies arguments from input array. Notifies consumers with
+		 *          appropriate signal (single/multi) based on inserted quantity.
+		 * @note TYPE must have either TYPE(PACKAGE&) or TYPE(PACKAGE) constructor
+		 */
+		template <typename PACKAGE>
+		unsigned int emplaceBulk(PACKAGE *packages, unsigned int count)
+		{
+			if (UNLIKELY(count == 0))
+				return 0;
+
+			std::unique_lock<std::mutex> lock(dataMutex);
+			unsigned int available = maxSize - size;
+
+			if (UNLIKELY(available == 0))
+				return 0;
+
+			unsigned int toPush = std::min(count, available);
+			for (unsigned int i = 0; i < toPush; ++i)
+			{
+				new (&dataListTail->data) TYPE(packages[i]);
+				dataListTail = dataListTail->next;
+			}
+
+			size += toPush;
+			lock.unlock();
+
+			if (LIKELY(toPush > 0))
+			{
+				if (toPush == 1)
+					notEmptyCond.notify_one();
+				else
+					notEmptyCond.notify_all();
+			}
+
+			return toPush;
+		}
+
+		/**
+		 * @brief Non-blocking bulk default construction
+		 * @param count Number of default-constructed elements to create
+		 * @return Actual number of elements successfully created
+		 * @details Uses TYPE's default constructor. Fails immediately if queue
+		 *          lacks sufficient space. Notifies consumers appropriately.
+		 */
+		unsigned int emplaceBulk(unsigned int count)
+		{
+			if (UNLIKELY(count == 0))
+				return 0;
+
+			std::unique_lock<std::mutex> lock(dataMutex);
+			unsigned int available = maxSize - size;
+
+			if (UNLIKELY(available == 0))
+				return 0;
+
+			unsigned int toPush = std::min(count, available);
+			for (unsigned int i = 0; i < toPush; ++i)
+			{
+				new (&dataListTail->data) TYPE();
+				dataListTail = dataListTail->next;
+			}
+
+			size += toPush;
+			lock.unlock();
+
+			if (LIKELY(toPush > 0))
+			{
+				if (toPush == 1)
+					notEmptyCond.notify_one();
+				else
+					notEmptyCond.notify_all();
+			}
+
+			return toPush;
+		}
+
+		/**
+		 * @brief Blocking bulk construction from parameters array
+		 * @tparam PACKAGE Type of construction arguments for TYPE
+		 * @param packages Pointer to construction arguments array
+		 * @param count Number of elements to construct
+		 * @return Actual number of elements created before stop/full
+		 * @details Waits indefinitely until space becomes available. Constructs
+		 *          elements using TYPE's constructor that accepts PACKAGE arguments.
+		 *          Returns immediately if queue is stopped.
+		 * @note Requires TYPE(PACKAGE&) or TYPE(PACKAGE) constructor
+		 */
+		template <typename PACKAGE>
+		unsigned int wait_emplaceBulk(PACKAGE *packages, unsigned int count)
+		{
+			if (UNLIKELY(count == 0))
+				return 0;
+
+			std::unique_lock<std::mutex> lock(dataMutex);
+			notFullCond.wait(lock, [this]
+							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(size == maxSize))
+				return 0;
+
+			unsigned int available = maxSize - size;
+			unsigned int toPush = std::min(count, available);
+			for (unsigned int i = 0; i < toPush; ++i)
+			{
+				new (&dataListTail->data) TYPE(packages[i]);
+				dataListTail = dataListTail->next;
+			}
+
+			size += toPush;
+			lock.unlock();
+
+			if (LIKELY(toPush > 0))
+			{
+				if (toPush == 1)
+					notEmptyCond.notify_one();
+				else
+					notEmptyCond.notify_all();
+			}
+
+			return toPush;
+		}
+
+		/**
+		 * @brief Blocking bulk default construction with wait
+		 * @param count Number of default-constructed elements to create
+		 * @return Actual number of elements created before stop/full
+		 * @details Waits for space using TYPE's default constructor. Processes
+		 *          maximum available capacity when awakened. Notifies consumers
+		 *          based on inserted quantity.
+		 */
+		unsigned int wait_emplaceBulk(unsigned int count)
+		{
+			if (UNLIKELY(count == 0))
+				return 0;
+
+			std::unique_lock<std::mutex> lock(dataMutex);
+			notFullCond.wait(lock, [this]
+							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(size == maxSize))
+				return 0;
+
+			unsigned int available = maxSize - size;
+			unsigned int toPush = std::min(count, available);
+			for (unsigned int i = 0; i < toPush; ++i)
+			{
+				new (&dataListTail->data) TYPE();
+				dataListTail = dataListTail->next;
+			}
+
+			size += toPush;
+			lock.unlock();
+
+			if (LIKELY(toPush > 0))
+			{
+				if (toPush == 1)
+					notEmptyCond.notify_one();
+				else
+					notEmptyCond.notify_all();
+			}
+
+			return toPush;
+		}
+
+		/**
+		 * @brief Timed bulk construction from parameters array
+		 * @tparam PACKAGE Type of construction arguments
+		 * @tparam Rep Chrono duration representation type
+		 * @tparam Period Chrono duration period type
+		 * @param packages Construction arguments array
+		 * @param count Maximum elements to construct
+		 * @param timeout Maximum wait duration
+		 * @return Actual number of elements constructed
+		 * @details Waits up to timeout duration for space. Constructs elements
+		 *          using TYPE's PACKAGE-accepting constructor. Returns immediately
+		 *          on timeout or queue stop.
+		 * @note TYPE must be constructible from PACKAGE arguments
+		 */
+		template <typename PACKAGE, class Rep, class Period>
+		unsigned int wait_emplaceBulk(PACKAGE *packages, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
+		{
+			if (UNLIKELY(count == 0))
+				return 0;
+
+			std::unique_lock<std::mutex> lock(dataMutex);
+			bool success = notFullCond.wait_for(lock, timeout, [this]
+												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!success || size == maxSize))
+				return 0;
+
+			unsigned int available = maxSize - size;
+			unsigned int toPush = std::min(count, available);
+			for (unsigned int i = 0; i < toPush; ++i)
+			{
+				new (&dataListTail->data) TYPE(packages[i]);
+				dataListTail = dataListTail->next;
+			}
+
+			size += toPush;
+			lock.unlock();
+
+			if (LIKELY(toPush > 0))
+			{
+				if (toPush == 1)
+					notEmptyCond.notify_one();
+				else
+					notEmptyCond.notify_all();
+			}
+
+			return toPush;
+		}
+
+		/**
+		 * @brief Timed bulk default construction
+		 * @tparam Rep Chrono duration representation type
+		 * @tparam Period Chrono duration period type
+		 * @param count Maximum elements to default-construct
+		 * @param timeout Maximum wait duration
+		 * @return Actual number of elements created
+		 * @details Combines timed wait with default construction. Processes
+		 *          maximum possible elements if space becomes available.
+		 *          Notifies consumers based on inserted quantity.
+		 */
+		template <class Rep, class Period>
+		unsigned int wait_emplaceBulk(unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
+		{
+			if (UNLIKELY(count == 0))
+				return 0;
+
+			std::unique_lock<std::mutex> lock(dataMutex);
+			bool success = notFullCond.wait_for(lock, timeout, [this]
+												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!success || size == maxSize))
+				return 0;
+
+			unsigned int available = maxSize - size;
+			unsigned int toPush = std::min(count, available);
+			for (unsigned int i = 0; i < toPush; ++i)
+			{
+				new (&dataListTail->data) TYPE();
+				dataListTail = dataListTail->next;
+			}
+
+			size += toPush;
+			lock.unlock();
+
+			if (LIKELY(toPush > 0))
+			{
+				if (toPush == 1)
+					notEmptyCond.notify_one();
+				else
+					notEmptyCond.notify_all();
+			}
+
+			return toPush;
+		}
+
+		/**
 		 * @brief Non-blocking element push
 		 * @tparam T Deduced element type (supports perfect forwarding)
 		 * @param element Element to push into queue
 		 * @return true if element was added, false if queue was full
 		 */
 		template <class T>
-		bool push(T&& element)
+		bool push(T &&element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 
@@ -160,12 +505,11 @@ namespace HSLL
 		 * @return true if element was added, false if queue was stopped
 		 */
 		template <class T>
-		bool wait_push(T&& element)
+		bool wait_push(T &&element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
-			notFullCond.wait(lock, [this] {
-				return LIKELY(size != maxSize) || UNLIKELY(isStopped);
-				});
+			notFullCond.wait(lock, [this]
+							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(size == maxSize))
 				return false;
@@ -188,12 +532,11 @@ namespace HSLL
 		 * @return true if element was added, false on timeout or stop
 		 */
 		template <class T, class Rep, class Period>
-		bool wait_push(T&& element, const std::chrono::duration<Rep, Period>& timeout)
+		bool wait_push(T &&element, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
-			bool success = notFullCond.wait_for(lock, timeout, [this] {
-				return LIKELY(size != maxSize) || UNLIKELY(isStopped);
-				});
+			bool success = notFullCond.wait_for(lock, timeout, [this]
+												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || size == maxSize))
 				return false;
@@ -207,85 +550,12 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Non-blocking element removal
-		 * @param element Reference to store popped element
-		 * @return true if element was retrieved, false if queue was empty
-		 */
-		bool pop(TYPE& element)
-		{
-			std::unique_lock<std::mutex> lock(dataMutex);
-
-			if (UNLIKELY(!size))
-				return false;
-
-			size--;
-			element = std::move(dataListHead->data);
-			conditional_destroy(dataListHead->data);
-			dataListHead = dataListHead->next;
-			lock.unlock();
-			notFullCond.notify_one();
-			return true;
-		}
-
-		/**
-		 * @brief Blocking element removal with indefinite wait
-		 * @param element Reference to store popped element
-		 * @return true if element was retrieved, false if queue was stopped
-		 */
-		bool wait_pop(TYPE& element)
-		{
-			std::unique_lock<std::mutex> lock(dataMutex);
-			notEmptyCond.wait(lock, [this] {
-				return LIKELY(size) || UNLIKELY(isStopped);
-				});
-
-			if (UNLIKELY(!size))
-				return false;
-
-			size--;
-			element = std::move(dataListHead->data);
-			conditional_destroy(dataListHead->data);
-			dataListHead = dataListHead->next;
-			lock.unlock();
-			notFullCond.notify_one();
-			return true;
-		}
-
-		/**
-		 * @brief Blocking element removal with timeout
-		 * @tparam Rep Chrono duration representation type
-		 * @tparam Period Chrono duration period type
-		 * @param element Reference to store popped element
-		 * @param timeout Maximum time to wait for data
-		 * @return true if element was retrieved, false on timeout or stop
-		 */
-		template <class Rep, class Period>
-		bool wait_pop(TYPE& element, const std::chrono::duration<Rep, Period>& timeout)
-		{
-			std::unique_lock<std::mutex> lock(dataMutex);
-			bool success = notEmptyCond.wait_for(lock, timeout, [this] {
-				return LIKELY(size) || UNLIKELY(isStopped);
-				});
-
-			if (UNLIKELY(!success || !size))
-				return false;
-
-			size--;
-			element = std::move(dataListHead->data);
-			conditional_destroy(dataListHead->data);
-			dataListHead = dataListHead->next;
-			lock.unlock();
-			notFullCond.notify_one();
-			return true;
-		}
-
-		/**
-		 * @brief Bulk push for multiple elements
-		 * @param elements Array of elements to push
+		 * @brief Bulk push for multiple elements using move semantics
+		 * @param elements Array of elements to move into the queue
 		 * @param count Number of elements to push
 		 * @return Actual number of elements pushed
 		 */
-		unsigned int pushBulk(TYPE* elements, unsigned int count)
+		unsigned int pushBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
@@ -315,20 +585,19 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Blocking bulk push with indefinite wait
-		 * @param elements Array of elements to push
+		 * @brief Blocking bulk push with indefinite wait (move semantics)
+		 * @param elements Array of elements to move into the queue
 		 * @param count Number of elements to push
 		 * @return Actual number of elements pushed before stop
 		 */
-		unsigned int wait_pushBulk(TYPE* elements, unsigned int count)
+		unsigned int wait_pushBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
-			notFullCond.wait(lock, [this] {
-				return LIKELY(size != maxSize) || UNLIKELY(isStopped);
-				});
+			notFullCond.wait(lock, [this]
+							 { return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(size == maxSize))
 				return 0;
@@ -353,24 +622,23 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Blocking bulk push with timeout
+		 * @brief Blocking bulk push with timeout (move semantics)
 		 * @tparam Rep Chrono duration representation type
 		 * @tparam Period Chrono duration period type
-		 * @param elements Array of elements to push
+		 * @param elements Array of elements to move into the queue
 		 * @param count Number of elements to push
 		 * @param timeout Maximum time to wait for space
 		 * @return Actual number of elements pushed
 		 */
 		template <class Rep, class Period>
-		unsigned int wait_pushBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
+		unsigned int wait_pushBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
-			bool success = notFullCond.wait_for(lock, timeout, [this] {
-				return LIKELY(size != maxSize) || UNLIKELY(isStopped);
-				});
+			bool success = notFullCond.wait_for(lock, timeout, [this]
+												{ return LIKELY(size != maxSize) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || size == maxSize))
 				return 0;
@@ -395,12 +663,83 @@ namespace HSLL
 		}
 
 		/**
+		 * @brief Non-blocking element removal
+		 * @param element Reference to store popped element
+		 * @return true if element was retrieved, false if queue was empty
+		 */
+		bool pop(TYPE &element)
+		{
+			std::unique_lock<std::mutex> lock(dataMutex);
+
+			if (UNLIKELY(!size))
+				return false;
+
+			size--;
+			element = std::move(dataListHead->data);
+			conditional_destroy(dataListHead->data);
+			dataListHead = dataListHead->next;
+			lock.unlock();
+			notFullCond.notify_one();
+			return true;
+		}
+
+		/**
+		 * @brief Blocking element removal with indefinite wait
+		 * @param element Reference to store popped element
+		 * @return true if element was retrieved, false if queue was stopped
+		 */
+		bool wait_pop(TYPE &element)
+		{
+			std::unique_lock<std::mutex> lock(dataMutex);
+			notEmptyCond.wait(lock, [this]
+							  { return LIKELY(size) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!size))
+				return false;
+
+			size--;
+			element = std::move(dataListHead->data);
+			conditional_destroy(dataListHead->data);
+			dataListHead = dataListHead->next;
+			lock.unlock();
+			notFullCond.notify_one();
+			return true;
+		}
+
+		/**
+		 * @brief Blocking element removal with timeout
+		 * @tparam Rep Chrono duration representation type
+		 * @tparam Period Chrono duration period type
+		 * @param element Reference to store popped element
+		 * @param timeout Maximum time to wait for data
+		 * @return true if element was retrieved, false on timeout or stop
+		 */
+		template <class Rep, class Period>
+		bool wait_pop(TYPE &element, const std::chrono::duration<Rep, Period> &timeout)
+		{
+			std::unique_lock<std::mutex> lock(dataMutex);
+			bool success = notEmptyCond.wait_for(lock, timeout, [this]
+												 { return LIKELY(size) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!success || !size))
+				return false;
+
+			size--;
+			element = std::move(dataListHead->data);
+			conditional_destroy(dataListHead->data);
+			dataListHead = dataListHead->next;
+			lock.unlock();
+			notFullCond.notify_one();
+			return true;
+		}
+
+		/**
 		 * @brief Bulk element retrieval
 		 * @param elements Array to store retrieved elements
 		 * @param count Maximum number of elements to retrieve
 		 * @return Actual number of elements retrieved
 		 */
-		unsigned int popBulk(TYPE* elements, unsigned int count)
+		unsigned int popBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
@@ -436,15 +775,14 @@ namespace HSLL
 		 * @param count Maximum number of elements to retrieve
 		 * @return Actual number of elements retrieved before stop
 		 */
-		unsigned int wait_popBulk(TYPE* elements, unsigned int count)
+		unsigned int wait_popBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
-			notEmptyCond.wait(lock, [this] {
-				return LIKELY(size) || UNLIKELY(isStopped);
-				});
+			notEmptyCond.wait(lock, [this]
+							  { return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!size))
 				return 0;
@@ -478,15 +816,14 @@ namespace HSLL
 		 * @return Actual number of elements retrieved
 		 */
 		template <class Rep, class Period>
-		unsigned int wait_popBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
+		unsigned int wait_popBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
-			bool success = notEmptyCond.wait_for(lock, timeout, [this] {
-				return LIKELY(size) || UNLIKELY(isStopped);
-				});
+			bool success = notEmptyCond.wait_for(lock, timeout, [this]
+												 { return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || !size))
 				return 0;
@@ -533,8 +870,8 @@ namespace HSLL
 		{
 			if (memoryBlock)
 			{
-				Node* nodes = (Node*)memoryBlock;
-				Node* current = dataListHead;
+				Node *nodes = (Node *)memoryBlock;
+				Node *current = dataListHead;
 
 				for (unsigned int i = 0; i < size; ++i)
 				{
@@ -554,8 +891,8 @@ namespace HSLL
 		}
 
 		// Disable copying
-		BlockQueue(const BlockQueue&) = delete;
-		BlockQueue& operator=(const BlockQueue&) = delete;
+		BlockQueue(const BlockQueue &) = delete;
+		BlockQueue &operator=(const BlockQueue &) = delete;
 	};
 }
 #endif // HSLL_BLOCKQUEUE

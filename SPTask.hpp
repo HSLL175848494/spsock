@@ -59,9 +59,7 @@ namespace HSLL
             if (!flag)
                 renableProc(ctx);
 
-            SockTaskTcp task(ctx, proc);
-
-            if (!pool->append(task))
+            if (!pool->emplace(ctx,proc))
             {
                 flag = false;
                 renableProc(ctx);

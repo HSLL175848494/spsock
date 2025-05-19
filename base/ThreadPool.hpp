@@ -62,6 +62,149 @@ namespace HSLL
         }
 
         /**
+         * @brief Non-blocking element emplacement with perfect forwarding
+         * @tparam Args Types of arguments to forward to element constructor
+         * @param args Arguments to forward to element constructor
+         * @return true if element was emplaced, false if queue was full
+         * @details Constructs element in-place at the tail of the queue using
+         *          perfect forwarding. Notifies consumers if successful.
+         */
+        template <typename... Args>
+        bool emplace(Args &&...args)
+        {
+            return taskQueue.emplace(std::forward<Args>(args)...);
+        }
+
+        /**
+         * @brief Blocking element emplacement with indefinite wait
+         * @tparam Args Types of arguments to forward to element constructor
+         * @param args Arguments to forward to element constructor
+         * @return true if element was emplaced, false if queue was stopped
+         * @details Waits until queue has space or is stopped. Constructs element
+         *          in-place and notifies consumers upon success.
+         */
+        template <typename... Args>
+        bool wait_emplace(Args &&...args)
+        {
+            return taskQueue.wait_emplace(std::forward<Args>(args)...);
+        }
+
+        /**
+         * @brief Blocking element emplacement with timeout
+         * @tparam Rep Chrono duration representation type
+         * @tparam Period Chrono duration period type
+         * @tparam Args Types of arguments to forward to element constructor
+         * @param timeout Maximum duration to wait for space
+         * @param args Arguments to forward to element constructor
+         * @return true if element was emplaced, false on timeout or stop
+         * @details Waits up to specified duration for space. Constructs element
+         *          in-place if space becomes available and notifies consumers.
+         */
+        template <class Rep, class Period, typename... Args>
+        bool wait_emplace(const std::chrono::duration<Rep, Period> &timeout, Args &&...args)
+        {
+            return taskQueue.wait_emplace(timeout, std::forward<Args>(args)...);
+        }
+
+        /**
+         * @brief Non-blocking bulk default construction
+         * @param count Number of default-constructed elements to create
+         * @return Actual number of elements successfully created
+         * @details Uses TYPE's default constructor. Fails immediately if queue
+         *          lacks sufficient space. Notifies consumers appropriately.
+         */
+        unsigned int emplaceBulk(unsigned int count)
+        {
+            return taskQueue.emplaceBulk(count);
+        }
+
+        /**
+         * @brief Non-blocking bulk construction from parameters array
+         * @tparam PACKAGE Type of construction arguments for TYPE
+         * @param packages Pointer to array of construction arguments
+         * @param count Number of elements to construct
+         * @return Actual number of elements successfully created
+         * @details Constructs elements using TYPE's constructor that accepts PACKAGE.
+         *          Copies arguments from input array. Notifies consumers with
+         *          appropriate signal (single/multi) based on inserted quantity.
+         * @note TYPE must have either TYPE(PACKAGE&) or TYPE(PACKAGE) constructor
+         */
+        template <typename PACKAGE>
+        unsigned int emplaceBulk(PACKAGE *packages, unsigned int count)
+        {
+            return taskQueue.emplaceBulk(packages, count);
+        }
+
+        /**
+         * @brief Blocking bulk default construction with wait
+         * @param count Number of default-constructed elements to create
+         * @return Actual number of elements created before stop/full
+         * @details Waits for space using TYPE's default constructor. Processes
+         *          maximum available capacity when awakened. Notifies consumers
+         *          based on inserted quantity.
+         */
+        unsigned int wait_emplaceBulk(unsigned int count)
+        {
+            return taskQueue.wait_emplaceBulk(count);
+        }
+
+        /**
+         * @brief Blocking bulk construction from parameters array
+         * @tparam PACKAGE Type of construction arguments for TYPE
+         * @param packages Pointer to construction arguments array
+         * @param count Number of elements to construct
+         * @return Actual number of elements created before stop/full
+         * @details Waits indefinitely until space becomes available. Constructs
+         *          elements using TYPE's constructor that accepts PACKAGE arguments.
+         *          Returns immediately if queue is stopped.
+         * @note Requires TYPE(PACKAGE&) or TYPE(PACKAGE) constructor
+         */
+        template <typename PACKAGE>
+        unsigned int wait_emplaceBulk(PACKAGE *packages, unsigned int count)
+        {
+            return taskQueue.wait_emplaceBulk(packages, count);
+        }
+
+        /**
+         * @brief Timed bulk default construction
+         * @tparam Rep Chrono duration representation type
+         * @tparam Period Chrono duration period type
+         * @param count Maximum elements to default-construct
+         * @param timeout Maximum wait duration
+         * @return Actual number of elements created
+         * @details Combines timed wait with default construction. Processes
+         *          maximum possible elements if space becomes available.
+         *          Notifies consumers based on inserted quantity.
+         */
+        template <class Rep, class Period>
+        unsigned int wait_emplaceBulk(unsigned int count,
+                                      const std::chrono::duration<Rep, Period> &timeout)
+        {
+            return taskQueue.wait_emplaceBulk(count, timeout);
+        }
+
+        /**
+         * @brief Timed bulk construction from parameters array
+         * @tparam PACKAGE Type of construction arguments
+         * @tparam Rep Chrono duration representation type
+         * @tparam Period Chrono duration period type
+         * @param packages Construction arguments array
+         * @param count Maximum elements to construct
+         * @param timeout Maximum wait duration
+         * @return Actual number of elements constructed
+         * @details Waits up to timeout duration for space. Constructs elements
+         *          using TYPE's PACKAGE-accepting constructor. Returns immediately
+         *          on timeout or queue stop.
+         * @note TYPE must be constructible from PACKAGE arguments
+         */
+        template <typename PACKAGE, class Rep, class Period>
+        unsigned int wait_emplaceBulk(PACKAGE *packages, unsigned int count,
+                                      const std::chrono::duration<Rep, Period> &timeout)
+        {
+            return taskQueue.wait_emplaceBulk(packages, count, timeout);
+        }
+
+        /**
          * @brief Append a single task to the queue
          * @tparam U Forward reference type for task object
          * @param task Task object to be added
@@ -117,7 +260,7 @@ namespace HSLL
          * @param count Number of tasks in the array
          * @return Number of tasks successfully added
          */
-        unsigned int wait_append_bulk(const T *tasks, unsigned int count)
+        unsigned int wait_appendBulk(T *tasks, unsigned int count)
         {
             return taskQueue.wait_pushBulk(tasks, count);
         }
@@ -132,8 +275,8 @@ namespace HSLL
          * @return Number of tasks successfully added before timeout
          */
         template <class Rep, class Period>
-        unsigned int wait_append_bulk(const T *tasks, unsigned int count,
-                                      const std::chrono::duration<Rep, Period> &timeout)
+        unsigned int wait_appendBulk(T *tasks, unsigned int count,
+                                     const std::chrono::duration<Rep, Period> &timeout)
         {
             return taskQueue.wait_pushBulk(tasks, count, timeout);
         }
@@ -153,22 +296,14 @@ namespace HSLL
 
                 while (true)
                 {
-                    if (taskQueue.pop(*taskPtr))
+                    if (taskQueue.wait_pop(*taskPtr))
                     {
                         taskPtr->execute();
-                        taskPtr->~T();
+                        conditional_destroy(*taskPtr);
                     }
                     else
                     {
-                        if (taskQueue.wait_pop(*taskPtr))
-                        {
-                            taskPtr->execute();
-                            taskPtr->~T();
-                        }
-                        else
-                        {
-                            break;
-                        }
+                        break;
                     }
                 }
             }
@@ -183,19 +318,15 @@ namespace HSLL
 
                 while (true)
                 {
-                    unsigned int count = taskQueue.popBulk(tasks, batchSize);
+                    count = taskQueue.wait_popBulk(tasks, batchSize);
 
                     if (count == 0)
-                    {
-                        count = taskQueue.wait_popBulk(tasks, batchSize);
-                        if (count == 0)
-                            break;
-                    }
+                        break;
 
                     for (unsigned int i = 0; i < count; ++i)
                     {
                         tasks[i].execute();
-                        tasks[i].~T();
+                        conditional_destroy(tasks[i]);
                     }
                 }
                 operator delete[](tasks);
