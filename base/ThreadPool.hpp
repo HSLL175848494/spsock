@@ -8,7 +8,6 @@
 
 namespace HSLL
 {
-
     /**
      * @brief Thread pool class for managing worker threads and task execution
      * @tparam T Type of tasks to be processed by the thread pool
@@ -17,11 +16,11 @@ namespace HSLL
     class ThreadPool
     {
     private:
-        unsigned int batchSize;  ///< Number of tasks to process in bulk operations
-        BlockQueue<T> taskQueue; ///< Thread-safe queue for storing pending tasks
+        unsigned int batchSize;
+        BlockQueue<T> taskQueue;
         std::atomic<unsigned int> count;
         std::atomic<unsigned int> error;
-        std::vector<std::thread> workers; ///< Collection of worker threads
+        std::vector<std::thread> workers;
 
     public:
         ThreadPool() = default;
@@ -108,7 +107,6 @@ namespace HSLL
 
         /**
          * @brief Non-blocking bulk default construction
-         * @param count Number of default-constructed elements to create
          * @return Actual number of elements successfully created
          * @details Uses TYPE's default constructor. Fails immediately if queue
          *          lacks sufficient space. Notifies consumers appropriately.
@@ -120,19 +118,19 @@ namespace HSLL
 
         /**
          * @brief Non-blocking bulk construction from parameters array
+         * @tparam METHOD BULK_CONSTRUCT_METHOD selection (COPY/MOVE)
          * @tparam PACKAGE Type of construction arguments for TYPE
          * @param packages Pointer to array of construction arguments
          * @param count Number of elements to construct
          * @return Actual number of elements successfully created
          * @details Constructs elements using TYPE's constructor that accepts PACKAGE.
-         *          Copies arguments from input array. Notifies consumers with
-         *          appropriate signal (single/multi) based on inserted quantity.
-         * @note TYPE must have either TYPE(PACKAGE&) or TYPE(PACKAGE) constructor
+         *          Uses specified construction semantics (copy/move). Notifies consumers
+         *          with appropriate signal based on inserted quantity.
          */
-        template <typename PACKAGE>
+        template <BULK_CMETHOD METHOD = COPY, typename PACKAGE>
         unsigned int emplaceBulk(PACKAGE *packages, unsigned int count)
         {
-            return taskQueue.emplaceBulk(packages, count);
+            return taskQueue.template emplaceBulk<METHOD>(packages, count);
         }
 
         /**
@@ -150,19 +148,19 @@ namespace HSLL
 
         /**
          * @brief Blocking bulk construction from parameters array
+         * @tparam METHOD BULK_CONSTRUCT_METHOD selection (COPY/MOVE)
          * @tparam PACKAGE Type of construction arguments for TYPE
          * @param packages Pointer to construction arguments array
          * @param count Number of elements to construct
          * @return Actual number of elements created before stop/full
          * @details Waits indefinitely until space becomes available. Constructs
-         *          elements using TYPE's constructor that accepts PACKAGE arguments.
+         *          elements using specified construction semantics (copy/move).
          *          Returns immediately if queue is stopped.
-         * @note Requires TYPE(PACKAGE&) or TYPE(PACKAGE) constructor
          */
-        template <typename PACKAGE>
+        template <BULK_CMETHOD METHOD = COPY, typename PACKAGE>
         unsigned int wait_emplaceBulk(PACKAGE *packages, unsigned int count)
         {
-            return taskQueue.wait_emplaceBulk(packages, count);
+            return taskQueue.template wait_emplaceBulk<METHOD>(packages, count);
         }
 
         /**
@@ -185,6 +183,7 @@ namespace HSLL
 
         /**
          * @brief Timed bulk construction from parameters array
+         * @tparam METHOD BULK_CONSTRUCT_METHOD selection (COPY/MOVE)
          * @tparam PACKAGE Type of construction arguments
          * @tparam Rep Chrono duration representation type
          * @tparam Period Chrono duration period type
@@ -193,15 +192,14 @@ namespace HSLL
          * @param timeout Maximum wait duration
          * @return Actual number of elements constructed
          * @details Waits up to timeout duration for space. Constructs elements
-         *          using TYPE's PACKAGE-accepting constructor. Returns immediately
-         *          on timeout or queue stop.
-         * @note TYPE must be constructible from PACKAGE arguments
+         *          using specified construction semantics (copy/move). Returns
+         *          immediately on timeout or queue stop.
          */
-        template <typename PACKAGE, class Rep, class Period>
+        template <BULK_CMETHOD METHOD = COPY, typename PACKAGE, class Rep, class Period>
         unsigned int wait_emplaceBulk(PACKAGE *packages, unsigned int count,
                                       const std::chrono::duration<Rep, Period> &timeout)
         {
-            return taskQueue.wait_emplaceBulk(packages, count, timeout);
+            return taskQueue.template wait_emplaceBulk<METHOD>(packages, count, timeout);
         }
 
         /**
@@ -218,13 +216,16 @@ namespace HSLL
 
         /**
          * @brief Append multiple tasks to the queue in bulk
+         * @tparam METHOD BULK_CONSTRUCT_METHOD selection (COPY/MOVE)
          * @param tasks Pointer to array of tasks
          * @param count Number of tasks in the array
          * @return Number of tasks successfully added
+         * @details Uses specified construction semantics (copy/move) for bulk insertion
          */
+        template <BULK_CMETHOD METHOD = COPY>
         unsigned int append_bulk(T *tasks, unsigned int count)
         {
-            return taskQueue.pushBulk(tasks, count);
+            return taskQueue.template pushBulk<METHOD>(tasks, count);
         }
 
         /**
@@ -256,17 +257,21 @@ namespace HSLL
 
         /**
          * @brief Wait and append multiple tasks in bulk
+         * @tparam METHOD BULK_CONSTRUCT_METHOD selection (COPY/MOVE)
          * @param tasks Pointer to array of tasks
          * @param count Number of tasks in the array
          * @return Number of tasks successfully added
+         * @details Uses specified construction semantics (copy/move) for bulk insertion
          */
+        template <BULK_CMETHOD METHOD = COPY>
         unsigned int wait_appendBulk(T *tasks, unsigned int count)
         {
-            return taskQueue.wait_pushBulk(tasks, count);
+            return taskQueue.template wait_pushBulk<METHOD>(tasks, count);
         }
 
         /**
          * @brief Wait and append multiple tasks in bulk with timeout
+         * @tparam METHOD BULK_CONSTRUCT_METHOD selection (COPY/MOVE)
          * @tparam Rep Time unit type for duration
          * @tparam Period Time interval type for duration
          * @param tasks Pointer to array of tasks
@@ -274,11 +279,11 @@ namespace HSLL
          * @param timeout Maximum wait duration
          * @return Number of tasks successfully added before timeout
          */
-        template <class Rep, class Period>
+        template <BULK_CMETHOD METHOD = COPY, class Rep, class Period>
         unsigned int wait_appendBulk(T *tasks, unsigned int count,
                                      const std::chrono::duration<Rep, Period> &timeout)
         {
-            return taskQueue.wait_pushBulk(tasks, count, timeout);
+            return taskQueue.template wait_pushBulk<METHOD>(tasks, count, timeout);
         }
 
         /**
@@ -290,7 +295,7 @@ namespace HSLL
             if (batchSize == 1)
             {
                 std::aligned_storage_t<sizeof(T), alignof(T)> taskBuffer;
-                T *taskPtr = (T *)(&taskBuffer);
+                T *taskPtr = reinterpret_cast<T *>(&taskBuffer);
 
                 count++;
 
@@ -309,21 +314,23 @@ namespace HSLL
             }
             else
             {
-                T *tasks = (T *)(operator new[](batchSize * sizeof(T), std::nothrow));
-
+                T *tasks = static_cast<T *>(operator new[](batchSize * sizeof(T), std::nothrow));
                 if (!tasks)
-                    error.fetch_and(1);
+                {
+                    error.store(1);
+                    count++;
+                    return;
+                }
 
                 count++;
 
                 while (true)
                 {
-                    count = taskQueue.wait_popBulk(tasks, batchSize);
-
-                    if (count == 0)
+                    unsigned int popped = taskQueue.wait_popBulk(tasks, batchSize);
+                    if (popped == 0)
                         break;
 
-                    for (unsigned int i = 0; i < count; ++i)
+                    for (unsigned int i = 0; i < popped; ++i)
                     {
                         tasks[i].execute();
                         conditional_destroy(tasks[i]);
@@ -352,8 +359,8 @@ namespace HSLL
             exit();
         }
 
-        ThreadPool(const ThreadPool &) = delete;            ///< Disable copy constructor
-        ThreadPool &operator=(const ThreadPool &) = delete; ///< Disable assignment operator
+        ThreadPool(const ThreadPool &) = delete;
+        ThreadPool &operator=(const ThreadPool &) = delete;
     };
 }
 #endif

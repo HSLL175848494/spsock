@@ -55,6 +55,64 @@ namespace HSLL
 	}
 
 	/**
+	 * @brief Enumeration defining the method of bulk construction
+	 * This enum is used to specify whether bulk construction operations should use
+	 * copy semantics or move semantics when constructing objects.
+	 */
+	enum BULK_CMETHOD
+	{
+		COPY, ///< Use copy construction semantics
+		MOVE  ///< Use move construction semantics
+	};
+
+	/**
+	 * @brief Helper template for bulk construction (copy/move)
+	 * @tparam T Type of object to construct
+	 * @tparam Method BULK_CONSTRUCT_METHOD selection
+	 * @tparam U Type of the source object
+	 */
+	template <typename T, BULK_CMETHOD Method, typename U>
+	struct BulkConstructHelper;
+
+	/**
+	 * @brief Specialization for copy construction from type U to T
+	 */
+	template <typename T, typename U>
+	struct BulkConstructHelper<T, COPY, U>
+	{
+		static void construct(T *ptr, U &source)
+		{
+			new (ptr) T(source);
+		}
+	};
+
+	/**
+	 * @brief Specialization for move construction from type U to T
+	 */
+	template <typename T, typename U>
+	struct BulkConstructHelper<T, MOVE, U>
+	{
+		static void construct(T *ptr, U &source)
+		{
+			new (ptr) T(std::move(source));
+		}
+	};
+
+	/**
+	 * @brief Conditionally constructs an object using copy/move semantics
+	 * @tparam Method BULK_CONSTRUCT_METHOD selection
+	 * @tparam T Type of the object to construct
+	 * @tparam U Type of the source object
+	 * @param ptr Pointer to memory location where object should be constructed
+	 * @param source Source object reference for construction
+	 */
+	template <BULK_CMETHOD Method, typename T, typename U>
+	void bulk_construct(T *ptr, U &source)
+	{
+		BulkConstructHelper<T, Method, U>::construct(ptr, source);
+	}
+
+	/**
 	 * @brief Circular buffer based blocking queue implementation
 	 * @tparam TYPE Element type stored in the queue
 	 * @details Features:
@@ -211,17 +269,15 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Non-blocking bulk construction from parameters array
-		 * @tparam PACKAGE Type of construction arguments for TYPE
-		 * @param packages Pointer to array of construction arguments
-		 * @param count Number of elements to construct
-		 * @return Actual number of elements successfully created
-		 * @details Constructs elements using TYPE's constructor that accepts PACKAGE.
-		 *          Copies arguments from input array. Notifies consumers with
-		 *          appropriate signal (single/multi) based on inserted quantity.
-		 * @note TYPE must have either TYPE(PACKAGE&) or TYPE(PACKAGE) constructor
+		 * @brief Bulk construction from parameters array with specified method
+		 * @tparam METHOD BULK_CONSTRUCT_METHOD selection (copy/move)
+		 * @param packages Construction parameters array
+		 * @param count Maximum elements to construct
+		 * @return Actual number of elements constructed
+		 * @details Uses TYPE's constructor with parameter type PACKAGE. Construction
+		 *          method (copy/move) is determined by METHOD template parameter.
 		 */
-		template <typename PACKAGE>
+		template <BULK_CMETHOD METHOD = COPY, typename PACKAGE>
 		unsigned int emplaceBulk(PACKAGE *packages, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
@@ -236,7 +292,7 @@ namespace HSLL
 			unsigned int toPush = std::min(count, available);
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
-				new (&dataListTail->data) TYPE(packages[i]);
+				bulk_construct<METHOD>(&dataListTail->data, packages[i]);
 				dataListTail = dataListTail->next;
 			}
 
@@ -294,17 +350,15 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Blocking bulk construction from parameters array
-		 * @tparam PACKAGE Type of construction arguments for TYPE
-		 * @param packages Pointer to construction arguments array
-		 * @param count Number of elements to construct
-		 * @return Actual number of elements created before stop/full
-		 * @details Waits indefinitely until space becomes available. Constructs
-		 *          elements using TYPE's constructor that accepts PACKAGE arguments.
+		 * @brief Blocking bulk construction with selected semantics
+		 * @tparam METHOD BULK_CONSTRUCT_METHOD selection (copy/move)
+		 * @param packages Construction parameters array
+		 * @param count Maximum elements to construct
+		 * @return Actual number of elements created before stop
+		 * @details Waits for space and constructs using specified METHOD (copy/move).
 		 *          Returns immediately if queue is stopped.
-		 * @note Requires TYPE(PACKAGE&) or TYPE(PACKAGE) constructor
 		 */
-		template <typename PACKAGE>
+		template <BULK_CMETHOD METHOD = COPY, typename PACKAGE>
 		unsigned int wait_emplaceBulk(PACKAGE *packages, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
@@ -321,7 +375,7 @@ namespace HSLL
 			unsigned int toPush = std::min(count, available);
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
-				new (&dataListTail->data) TYPE(packages[i]);
+				bulk_construct<METHOD>(&dataListTail->data, packages[i]);
 				dataListTail = dataListTail->next;
 			}
 
@@ -382,20 +436,17 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Timed bulk construction from parameters array
-		 * @tparam PACKAGE Type of construction arguments
-		 * @tparam Rep Chrono duration representation type
-		 * @tparam Period Chrono duration period type
-		 * @param packages Construction arguments array
+		 * @brief Timed bulk construction with selected semantics
+		 * @tparam METHOD BULK_CONSTRUCT_METHOD selection (copy/move)
+		 * @param packages Construction parameters array
 		 * @param count Maximum elements to construct
 		 * @param timeout Maximum wait duration
 		 * @return Actual number of elements constructed
-		 * @details Waits up to timeout duration for space. Constructs elements
-		 *          using TYPE's PACKAGE-accepting constructor. Returns immediately
-		 *          on timeout or queue stop.
-		 * @note TYPE must be constructible from PACKAGE arguments
+		 * @details Waits up to timeout for space. Constructs elements using
+		 *          specified METHOD (copy/move). Returns immediately on
+		 *          timeout or queue stop.
 		 */
-		template <typename PACKAGE, class Rep, class Period>
+		template <BULK_CMETHOD METHOD = COPY, typename PACKAGE, class Rep, class Period>
 		unsigned int wait_emplaceBulk(PACKAGE *packages, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			if (UNLIKELY(count == 0))
@@ -412,7 +463,7 @@ namespace HSLL
 			unsigned int toPush = std::min(count, available);
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
-				new (&dataListTail->data) TYPE(packages[i]);
+				bulk_construct<METHOD>(&dataListTail->data, packages[i]);
 				dataListTail = dataListTail->next;
 			}
 
@@ -550,11 +601,15 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Bulk push for multiple elements using move semantics
-		 * @param elements Array of elements to move into the queue
+		 * @brief Bulk push for multiple elements using specified construction method
+		 * @param elements Array of elements to construct from
 		 * @param count Number of elements to push
 		 * @return Actual number of elements pushed
+		 * @details Constructs elements using either copy or move semantics based on
+		 *          BULK_CONSTRUCT_METHOD template parameter. Notifies consumers based
+		 *          on inserted quantity.
 		 */
+		template <BULK_CMETHOD METHOD = COPY>
 		unsigned int pushBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
@@ -569,7 +624,7 @@ namespace HSLL
 			unsigned int toPush = std::min(count, available);
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
-				new (&dataListTail->data) TYPE(std::move(elements[i]));
+				bulk_construct<METHOD>(&dataListTail->data, elements[i]);
 				dataListTail = dataListTail->next;
 			}
 
@@ -585,11 +640,14 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Blocking bulk push with indefinite wait (move semantics)
-		 * @param elements Array of elements to move into the queue
+		 * @brief Blocking bulk push with specified construction semantics
+		 * @param elements Array of elements to construct from
 		 * @param count Number of elements to push
 		 * @return Actual number of elements pushed before stop
+		 * @details Waits indefinitely for space. Constructs elements using either
+		 *          copy or move semantics based on BULK_CONSTRUCT_METHOD template.
 		 */
+		template <BULK_CMETHOD METHOD = COPY>
 		unsigned int wait_pushBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
@@ -606,7 +664,7 @@ namespace HSLL
 			unsigned int toPush = std::min(count, available);
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
-				new (&dataListTail->data) TYPE(std::move(elements[i]));
+				bulk_construct<METHOD>(&dataListTail->data, elements[i]);
 				dataListTail = dataListTail->next;
 			}
 
@@ -622,15 +680,17 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Blocking bulk push with timeout (move semantics)
-		 * @tparam Rep Chrono duration representation type
-		 * @tparam Period Chrono duration period type
-		 * @param elements Array of elements to move into the queue
+		 * @brief Timed bulk push with specified construction method
+		 * @tparam METHOD BULK_CONSTRUCT_METHOD selection (copy/move)
+		 * @param elements Array of elements to construct from
 		 * @param count Number of elements to push
 		 * @param timeout Maximum time to wait for space
 		 * @return Actual number of elements pushed
+		 * @details Waits up to timeout duration. Constructs elements using
+		 *          selected METHOD (copy/move). Processes maximum available
+		 *          capacity when awakened.
 		 */
-		template <class Rep, class Period>
+		template <BULK_CMETHOD METHOD = COPY, class Rep, class Period>
 		unsigned int wait_pushBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			if (UNLIKELY(count == 0))
@@ -647,7 +707,7 @@ namespace HSLL
 			unsigned int toPush = std::min(count, available);
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
-				new (&dataListTail->data) TYPE(std::move(elements[i]));
+				bulk_construct<METHOD>(&dataListTail->data, elements[i]);
 				dataListTail = dataListTail->next;
 			}
 
