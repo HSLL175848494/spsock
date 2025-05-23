@@ -5,7 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <cassert>
-#include "BlockQueue.hpp"
+#include "PBlockQueue.hpp"
 
 namespace HSLL
 {
@@ -17,7 +17,7 @@ namespace HSLL
 	class ThreadPool
 	{
 	private:
-		BlockQueue<T> *queues;			  ///< Per-worker task queues
+		BlockQueue<T>* queues;			  ///< Per-worker task queues
 		std::atomic<unsigned int> target; ///< Atomic counter for queue selection
 		std::vector<std::thread> workers; ///< Worker thread collection
 
@@ -93,7 +93,7 @@ namespace HSLL
 		 * @return Actual number of tasks enqueued
 		 */
 		template <BULK_CMETHOD METHOD = COPY, typename PACKAGE>
-		unsigned int emplaceBulk(PACKAGE *packages, unsigned int count)
+		unsigned int emplaceBulk(PACKAGE* packages, unsigned int count)
 		{
 			return queues[next_index()].template emplaceBulk<METHOD>(packages, count);
 		}
@@ -105,7 +105,7 @@ namespace HSLL
 		 * @return true if task was enqueued successfully
 		 */
 		template <typename U>
-		bool append(U &&task)
+		bool append(U&& task)
 		{
 			return queues[next_index()].push(std::forward<U>(task));
 		}
@@ -118,7 +118,7 @@ namespace HSLL
 		 * @return Actual number of tasks enqueued
 		 */
 		template <BULK_CMETHOD METHOD = COPY>
-		unsigned int append_bulk(T *tasks, unsigned int count)
+		unsigned int append_bulk(T* tasks, unsigned int count)
 		{
 			return queues[next_index()].template pushBulk<METHOD>(tasks, count);
 		}
@@ -135,7 +135,7 @@ namespace HSLL
 					queues[i].stopWait();
 				}
 
-				for (auto &worker : workers)
+				for (auto& worker : workers)
 				{
 					if (worker.joinable())
 					{
@@ -158,8 +158,8 @@ namespace HSLL
 		}
 
 		// Deleted copy operations
-		ThreadPool(const ThreadPool &) = delete;
-		ThreadPool &operator=(const ThreadPool &) = delete;
+		ThreadPool(const ThreadPool&) = delete;
+		ThreadPool& operator=(const ThreadPool&) = delete;
 
 	private:
 		/**
@@ -173,7 +173,7 @@ namespace HSLL
 		/**
 		 * @brief Worker thread processing function
 		 */
-		static void worker(BlockQueue<T> &queue, unsigned batchSize) noexcept
+		static void worker(BlockQueue<T>& queue, unsigned batchSize) noexcept
 		{
 			if (batchSize == 1)
 			{
@@ -188,10 +188,10 @@ namespace HSLL
 		/**
 		 * @brief  Processes tasks one at a time
 		 */
-		static void process_single_tasks(BlockQueue<T> &queue) noexcept
+		static void process_single_tasks(BlockQueue<T>& queue) noexcept
 		{
 			std::aligned_storage_t<sizeof(T), alignof(T)> storage;
-			T *task = reinterpret_cast<T *>(&storage);
+			T* task = reinterpret_cast<T*>(&storage);
 
 			while (queue.wait_pop(*task))
 			{
@@ -203,9 +203,9 @@ namespace HSLL
 		/**
 		 * @brief  Processes tasks in batches
 		 */
-		static void process_batched_tasks(BlockQueue<T> &queue, unsigned batchSize) noexcept
+		static void process_batched_tasks(BlockQueue<T>& queue, unsigned batchSize) noexcept
 		{
-			T *tasks = (T *)(::operator new[](batchSize * sizeof(T)));
+			T* tasks = (T*)(::operator new[](batchSize * sizeof(T)));
 			assert(tasks && "Failed to allocate task buffer");
 
 			while (true)
