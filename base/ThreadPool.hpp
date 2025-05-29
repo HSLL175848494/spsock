@@ -1,14 +1,55 @@
 #ifndef HSLL_THREADPOOL
 #define HSLL_THREADPOOL
 
-#include <vector>
-#include <thread>
-#include <atomic>
-#include <cassert>
-#include "PBlockQueue.hpp"
+#if defined(__linux__)
+#include <pthread.h>
+#elif defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 namespace HSLL
 {
+	struct ThreadBinder
+	{
+		/**
+		 * @brief Binds the calling thread to a specific CPU core
+		 * @param id Target core ID (0-indexed)
+		 * @return true if binding succeeded, false otherwise
+		 *
+		 * @note Platform-specific implementation:
+		 *       - Linux: Uses pthread affinity
+		 *       - Windows: Uses thread affinity mask
+		 *       - Other platforms: No-op (always returns true)
+		 */
+		static bool bind_current_thread_to_core(unsigned id)
+		{
+#if defined(__linux__)
+			cpu_set_t cpuset;
+			CPU_ZERO(&cpuset);
+			CPU_SET(id, &cpuset);
+			return pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) == 0;
+
+#elif defined(_WIN32)
+			return SetThreadAffinityMask(GetCurrentThread(), 1ull << id) != 0;
+
+#else
+			return true;
+#endif
+		}
+	};
+};
+
+#include <vector>
+#include <thread>
+#include <atomic>
+#include <assert.h>
+#include "TPBlockQueue.hpp"
+
+namespace HSLL
+{
+
 	/**
 	 * @brief Thread pool implementation with multiple queues for task distribution
 	 * @tparam T Type of task objects to be processed, must implement execute() method
@@ -17,15 +58,17 @@ namespace HSLL
 	class ThreadPool
 	{
 	private:
-		BlockQueue<T>* queues;			  ///< Per-worker task queues
-		std::atomic<unsigned int> target; ///< Atomic counter for queue selection
+		BlockQueue<T> *queues;			  ///< Per-worker task queues
 		std::vector<std::thread> workers; ///< Worker thread collection
+		unsigned int threadNum;			  ///< Number of worker threads/queues to create
+		unsigned int queueLength;		  ///< Capacity of each internal queue
+		std::atomic<unsigned int> index;  ///< Atomic counter for round-robin task distribution to worker queues
 
 	public:
 		/**
 		 * @brief Constructs an uninitialized thread pool
 		 */
-		ThreadPool() noexcept : queues(nullptr) {}
+		ThreadPool() : queues(nullptr) {}
 
 		/**
 		 * @brief Initializes thread pool resources
@@ -36,6 +79,7 @@ namespace HSLL
 		 */
 		bool init(unsigned int queueLength, unsigned int threadNum, unsigned int batchSize = 1)
 		{
+
 			if (batchSize == 0 || threadNum == 0)
 				return false;
 
@@ -54,10 +98,31 @@ namespace HSLL
 				}
 			}
 
-			workers.reserve(threadNum);
+			unsigned cores = std::thread::hardware_concurrency();
 
+			if (!cores)
+			{
+				delete[] queues;
+				queues = nullptr;
+				return false;
+			}
+
+			workers.reserve(threadNum);
 			for (unsigned i = 0; i < threadNum; ++i)
-				workers.emplace_back(&ThreadPool::worker, std::ref(queues[i]), batchSize);
+			{
+				workers.emplace_back([i, cores, &queue = queues[i], batchSize]
+									 {
+
+					if (cores > 0)
+					{
+						unsigned id = i % cores;
+						ThreadBinder::bind_current_thread_to_core(id);
+					}
+					worker(std::ref(queue), batchSize); });
+			}
+
+			this->threadNum = threadNum;
+			this->queueLength = queueLength;
 
 			return true;
 		}
@@ -71,7 +136,17 @@ namespace HSLL
 		template <typename... Args>
 		bool emplace(Args &&...args)
 		{
-			return queues[next_index()].emplace(std::forward<Args>(args)...);
+			unsigned int index = next_index();
+
+			if (queues[index].size < queueLength)
+			{
+				return queues[index].emplace(std::forward<Args>(args)...);
+			}
+			else
+			{
+				unsigned int half = threadNum / 2;
+				return queues[(index + half) % threadNum].emplace(std::forward<Args>(args)...);
+			}
 		}
 
 		/**
@@ -81,7 +156,17 @@ namespace HSLL
 		 */
 		unsigned int emplaceBulk(unsigned int count)
 		{
-			return queues[next_index()].emplaceBulk(count);
+			unsigned int index = next_index();
+
+			if (queues[index].size + count / 2 <= queueLength)
+			{
+				return queues[index].template emplaceBulk(count);
+			}
+			else
+			{
+				unsigned int half = threadNum / 2;
+				return queues[(index + half) % threadNum].template emplaceBulk(count);
+			}
 		}
 
 		/**
@@ -93,9 +178,20 @@ namespace HSLL
 		 * @return Actual number of tasks enqueued
 		 */
 		template <BULK_CMETHOD METHOD = COPY, typename PACKAGE>
-		unsigned int emplaceBulk(PACKAGE* packages, unsigned int count)
+		unsigned int emplaceBulk(PACKAGE *packages, unsigned int count)
 		{
-			return queues[next_index()].template emplaceBulk<METHOD>(packages, count);
+			unsigned int index = next_index();
+			unsigned int half = threadNum / 2;
+
+			if (queues[index].size + count / 2 <= queueLength)
+			{
+				return queues[index].template emplaceBulk<METHOD>(packages, count);
+			}
+			else
+			{
+				unsigned int half = threadNum / 2;
+				return queues[(index + half) % threadNum].template emplaceBulk<METHOD>(packages, count);
+			}
 		}
 
 		/**
@@ -105,9 +201,19 @@ namespace HSLL
 		 * @return true if task was enqueued successfully
 		 */
 		template <typename U>
-		bool append(U&& task)
+		bool append(U &&task)
 		{
-			return queues[next_index()].push(std::forward<U>(task));
+			unsigned int index = next_index();
+
+			if (queues[index].size < queueLength)
+			{
+				return queues[index].push(std::forward<U>(task));
+			}
+			else
+			{
+				unsigned int half = threadNum / 2;
+				return queues[(index + half) % threadNum].push(std::forward<U>(task));
+			}
 		}
 
 		/**
@@ -118,9 +224,19 @@ namespace HSLL
 		 * @return Actual number of tasks enqueued
 		 */
 		template <BULK_CMETHOD METHOD = COPY>
-		unsigned int append_bulk(T* tasks, unsigned int count)
+		unsigned int append_bulk(T *tasks, unsigned int count)
 		{
-			return queues[next_index()].template pushBulk<METHOD>(tasks, count);
+			unsigned int index = next_index();
+
+			if (queues[index].size + count / 2 <= queueLength)
+			{
+				return queues[index].template pushBulk<METHOD>(tasks, count);
+			}
+			else
+			{
+				unsigned int half = threadNum / 2;
+				return queues[(index + half) % threadNum].template pushBulk<METHOD>(tasks, count);
+			}
 		}
 
 		/**
@@ -135,7 +251,7 @@ namespace HSLL
 					queues[i].stopWait();
 				}
 
-				for (auto& worker : workers)
+				for (auto &worker : workers)
 				{
 					if (worker.joinable())
 					{
@@ -158,8 +274,8 @@ namespace HSLL
 		}
 
 		// Deleted copy operations
-		ThreadPool(const ThreadPool&) = delete;
-		ThreadPool& operator=(const ThreadPool&) = delete;
+		ThreadPool(const ThreadPool &) = delete;
+		ThreadPool &operator=(const ThreadPool &) = delete;
 
 	private:
 		/**
@@ -167,31 +283,31 @@ namespace HSLL
 		 */
 		unsigned int next_index() noexcept
 		{
-			return target.fetch_add(1, std::memory_order_relaxed) % workers.size();
+			return index.fetch_add(1, std::memory_order_relaxed) % workers.size();
 		}
 
 		/**
 		 * @brief Worker thread processing function
 		 */
-		static void worker(BlockQueue<T>& queue, unsigned batchSize) noexcept
+		static void worker(BlockQueue<T> &queue, unsigned batchSize) noexcept
 		{
 			if (batchSize == 1)
 			{
-				process_single_tasks(queue);
+				process_single(queue);
 			}
 			else
 			{
-				process_batched_tasks(queue, batchSize);
+				process_bulk(queue, batchSize);
 			}
 		}
 
 		/**
 		 * @brief  Processes tasks one at a time
 		 */
-		static void process_single_tasks(BlockQueue<T>& queue) noexcept
+		static void process_single(BlockQueue<T> &queue) noexcept
 		{
 			std::aligned_storage_t<sizeof(T), alignof(T)> storage;
-			T* task = reinterpret_cast<T*>(&storage);
+			T *task = (T *)(&storage);
 
 			while (queue.wait_pop(*task))
 			{
@@ -203,9 +319,9 @@ namespace HSLL
 		/**
 		 * @brief  Processes tasks in batches
 		 */
-		static void process_batched_tasks(BlockQueue<T>& queue, unsigned batchSize) noexcept
+		static void process_bulk(BlockQueue<T> &queue, unsigned batchSize) noexcept
 		{
-			T* tasks = (T*)(::operator new[](batchSize * sizeof(T)));
+			T *tasks = (T *)(::operator new[](batchSize * sizeof(T)));
 			assert(tasks && "Failed to allocate task buffer");
 
 			while (true)

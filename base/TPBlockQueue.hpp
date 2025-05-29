@@ -1,5 +1,5 @@
-#ifndef HSLL_PBLOCKQUEUE
-#define HSLL_PBLOCKQUEUE
+#ifndef HSLL_TPBLOCKQUEUE
+#define HSLL_TPBLOCKQUEUE
 
 #include <new>
 #include <mutex>
@@ -28,7 +28,7 @@ namespace HSLL
 	template <typename T, bool IsTrivial = std::is_trivially_destructible<T>::value>
 	struct DestroyHelper
 	{
-		static void destroy(T& obj) { obj.~T(); }
+		static void destroy(T &obj) { obj.~T(); }
 	};
 
 	/**
@@ -37,7 +37,7 @@ namespace HSLL
 	template <typename T>
 	struct DestroyHelper<T, true>
 	{
-		static void destroy(T&) {}
+		static void destroy(T &) {}
 	};
 
 	/**
@@ -49,7 +49,7 @@ namespace HSLL
 	 *          - No action for trivial types
 	 */
 	template <typename T>
-	void conditional_destroy(T& obj)
+	void conditional_destroy(T &obj)
 	{
 		DestroyHelper<T>::destroy(obj);
 	}
@@ -80,7 +80,7 @@ namespace HSLL
 	template <typename T, typename U>
 	struct BulkConstructHelper<T, COPY, U>
 	{
-		static void construct(T* ptr, U& source)
+		static void construct(T *ptr, U &source)
 		{
 			new (ptr) T(source);
 		}
@@ -92,7 +92,7 @@ namespace HSLL
 	template <typename T, typename U>
 	struct BulkConstructHelper<T, MOVE, U>
 	{
-		static void construct(T* ptr, U& source)
+		static void construct(T *ptr, U &source)
 		{
 			new (ptr) T(std::move(source));
 		}
@@ -107,7 +107,7 @@ namespace HSLL
 	 * @param source Source object reference for construction
 	 */
 	template <BULK_CMETHOD Method, typename T, typename U>
-	void bulk_construct(T* ptr, U& source)
+	void bulk_construct(T *ptr, U &source)
 	{
 		BulkConstructHelper<T, Method, U>::construct(ptr, source);
 	}
@@ -129,12 +129,12 @@ namespace HSLL
 		struct Node
 		{
 			TYPE data;	///< Storage for element data
-			Node* next; ///< Pointer to next node in circular list
+			Node *next; ///< Pointer to next node in circular list
 			Node() = default;
 		};
 
 		// Memory management
-		void* memoryBlock;		///< Raw memory block for node storage
+		void *memoryBlock;		///< Raw memory block for node storage
 		unsigned int isStopped; ///< Flag for stopping all operations
 
 		// Queue state tracking
@@ -142,13 +142,16 @@ namespace HSLL
 		unsigned int maxSize; ///< Maximum capacity of the queue
 
 		// List pointers
-		Node* dataListHead; ///< Pointer to first element in queue
-		Node* dataListTail; ///< Pointer to next insertion position
+		Node *dataListHead; ///< Pointer to first element in queue
+		Node *dataListTail; ///< Pointer to next insertion position
 
 		// Synchronization primitives
 		std::mutex dataMutex;				  ///< Mutex protecting all queue operations
 		std::condition_variable notEmptyCond; ///< Signaled when data becomes available
 		std::condition_variable notFullCond;  ///< Signaled when space becomes available
+
+		template <class T>
+		friend class ThreadPool;
 
 	public:
 		BlockQueue() : memoryBlock(nullptr), isStopped(0) {}
@@ -175,7 +178,7 @@ namespace HSLL
 			if (!memoryBlock)
 				return false;
 
-			Node* nodes = (Node*)(memoryBlock);
+			Node *nodes = (Node *)(memoryBlock);
 
 			for (unsigned int i = 0; i < capacity - 1; ++i)
 				nodes[i].next = &nodes[i + 1];
@@ -221,7 +224,7 @@ namespace HSLL
 		 *          method (copy/move) is determined by METHOD template parameter.
 		 */
 		template <BULK_CMETHOD METHOD = COPY, typename PACKAGE>
-		unsigned int emplaceBulk(PACKAGE* packages, unsigned int count)
+		unsigned int emplaceBulk(PACKAGE *packages, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
@@ -299,7 +302,7 @@ namespace HSLL
 		 * @return true if element was added, false if queue was full
 		 */
 		template <class T>
-		bool push(T&& element)
+		bool push(T &&element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 
@@ -324,7 +327,7 @@ namespace HSLL
 		 *          on inserted quantity.
 		 */
 		template <BULK_CMETHOD METHOD = COPY>
-		unsigned int pushBulk(TYPE* elements, unsigned int count)
+		unsigned int pushBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
@@ -358,11 +361,11 @@ namespace HSLL
 		 * @param element Reference to store popped element
 		 * @return true if element was retrieved, false if queue was stopped
 		 */
-		bool wait_pop(TYPE& element)
+		bool wait_pop(TYPE &element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+							  { return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!size))
 				return false;
@@ -381,14 +384,14 @@ namespace HSLL
 		 * @param count Maximum number of elements to retrieve
 		 * @return Actual number of elements retrieved before stop
 		 */
-		unsigned int wait_popBulk(TYPE* elements, unsigned int count)
+		unsigned int wait_popBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+							  { return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!size))
 				return 0;
@@ -429,8 +432,8 @@ namespace HSLL
 		{
 			if (memoryBlock)
 			{
-				Node* nodes = (Node*)memoryBlock;
-				Node* current = dataListHead;
+				Node *nodes = (Node *)memoryBlock;
+				Node *current = dataListHead;
 
 				for (unsigned int i = 0; i < size; ++i)
 				{
@@ -450,8 +453,8 @@ namespace HSLL
 		}
 
 		// Disable copying
-		BlockQueue(const BlockQueue&) = delete;
-		BlockQueue& operator=(const BlockQueue&) = delete;
+		BlockQueue(const BlockQueue &) = delete;
+		BlockQueue &operator=(const BlockQueue &) = delete;
 	};
 }
-#endif // HSLL_BLOCKQUEUE
+#endif // HSLL_TPBLOCKQUEUE

@@ -1005,9 +1005,7 @@ namespace HSLL
         }
 
         if ((status & 0x4) != 0x4)
-        {
             HSLL_LOGINFO(LOG_LEVEL_WARNING, "Exit signal handler not configured");
-        }
 
         HSLL_LOGINFO(LOG_LEVEL_CRUCIAL, "Event loop started");
 
