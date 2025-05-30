@@ -11,7 +11,7 @@ void echo_read_write_proc(SOCKController *controller)
         return;
     }
 
-    if (!controller->writeBack())
+    if (controller->writeBack()<0)
     {
         controller->close();
     }
