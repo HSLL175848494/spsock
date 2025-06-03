@@ -50,25 +50,28 @@ namespace HSLL
 namespace HSLL
 {
 
+#define HSLL_THREADPOOL_TIMEOUT 5
+
 	/**
 	 * @brief Thread pool implementation with multiple queues for task distribution
+	 * @tparam T Type of task objects to be processed, must implement execute() method
 	 * @tparam T Type of task objects to be processed, must implement execute() method
 	 */
 	template <class T>
 	class ThreadPool
 	{
 	private:
-		BlockQueue<T> *queues;			  ///< Per-worker task queues
-		std::vector<std::thread> workers; ///< Worker thread collection
+		BlockQueue<T>* queues;			  ///< Per-worker task queues
 		unsigned int threadNum;			  ///< Number of worker threads/queues to create
 		unsigned int queueLength;		  ///< Capacity of each internal queue
+		std::vector<std::thread> workers; ///< Worker thread collection
 		std::atomic<unsigned int> index;  ///< Atomic counter for round-robin task distribution to worker queues
 
 	public:
 		/**
 		 * @brief Constructs an uninitialized thread pool
 		 */
-		ThreadPool() : queues(nullptr) {}
+		ThreadPool() : queues(nullptr), threadNum(0), queueLength(0) {}
 
 		/**
 		 * @brief Initializes thread pool resources
@@ -79,8 +82,7 @@ namespace HSLL
 		 */
 		bool init(unsigned int queueLength, unsigned int threadNum, unsigned int batchSize = 1)
 		{
-
-			if (batchSize == 0 || threadNum == 0)
+			if (batchSize == 0 || threadNum == 0 || batchSize > queueLength)
 				return false;
 
 			queues = new (std::nothrow) BlockQueue<T>[threadNum];
@@ -107,22 +109,22 @@ namespace HSLL
 				return false;
 			}
 
-			workers.reserve(threadNum);
-			for (unsigned i = 0; i < threadNum; ++i)
-			{
-				workers.emplace_back([i, cores, &queue = queues[i], batchSize]
-									 {
-
-					if (cores > 0)
-					{
-						unsigned id = i % cores;
-						ThreadBinder::bind_current_thread_to_core(id);
-					}
-					worker(std::ref(queue), batchSize); });
-			}
-
 			this->threadNum = threadNum;
 			this->queueLength = queueLength;
+			workers.reserve(threadNum);
+
+			for (unsigned i = 0; i < threadNum; ++i)
+			{
+				workers.emplace_back([this, i, cores, batchSize]
+					{
+
+						if (cores > 0)
+						{
+							unsigned id = i % cores;
+							ThreadBinder::bind_current_thread_to_core(id);
+						}
+						worker(i, batchSize); });
+			}
 
 			return true;
 		}
@@ -151,11 +153,12 @@ namespace HSLL
 
 		/**
 		 * @brief Enqueues multiple default-constructed tasks
-		 * @param count Number of tasks to create
+		 * @param count Number of tasks to create (Required: count <= queueLength)
 		 * @return Actual number of tasks enqueued
 		 */
 		unsigned int emplaceBulk(unsigned int count)
 		{
+			assert(count <= queueLength);
 			unsigned int index = next_index();
 
 			if (queues[index].size + count / 2 <= queueLength)
@@ -174,14 +177,14 @@ namespace HSLL
 		 * @tparam METHOD Bulk construction method (COPY/MOVE)
 		 * @tparam PACKAGE Type of construction parameters
 		 * @param packages Construction parameter array
-		 * @param count Number of tasks to create
+		 * @param count Number of tasks to create (Required: count <= queueLength)
 		 * @return Actual number of tasks enqueued
 		 */
 		template <BULK_CMETHOD METHOD = COPY, typename PACKAGE>
-		unsigned int emplaceBulk(PACKAGE *packages, unsigned int count)
+		unsigned int emplaceBulk(PACKAGE* packages, unsigned int count)
 		{
+			assert(count <= queueLength);
 			unsigned int index = next_index();
-			unsigned int half = threadNum / 2;
 
 			if (queues[index].size + count / 2 <= queueLength)
 			{
@@ -201,7 +204,7 @@ namespace HSLL
 		 * @return true if task was enqueued successfully
 		 */
 		template <typename U>
-		bool append(U &&task)
+		bool append(U&& task)
 		{
 			unsigned int index = next_index();
 
@@ -220,12 +223,13 @@ namespace HSLL
 		 * @brief Enqueues multiple preconstructed tasks
 		 * @tparam METHOD Bulk insertion method (COPY/MOVE)
 		 * @param tasks Task object array
-		 * @param count Number of tasks in array
+		 * @param count Number of tasks in array (Required: count <= queueLength)
 		 * @return Actual number of tasks enqueued
 		 */
 		template <BULK_CMETHOD METHOD = COPY>
-		unsigned int append_bulk(T *tasks, unsigned int count)
+		unsigned int append_bulk(T* tasks, unsigned int count)
 		{
+			assert(count <= queueLength);
 			unsigned int index = next_index();
 
 			if (queues[index].size + count / 2 <= queueLength)
@@ -251,17 +255,18 @@ namespace HSLL
 					queues[i].stopWait();
 				}
 
-				for (auto &worker : workers)
+				for (auto& worker : workers)
 				{
 					if (worker.joinable())
-					{
 						worker.join();
-					}
 				}
 
 				workers.clear();
-				delete[] queues;
+				workers.shrink_to_fit();
+				threadNum = 0;
+				queueLength = 0;
 				queues = nullptr;
+				delete[] queues;
 			}
 		}
 
@@ -274,8 +279,8 @@ namespace HSLL
 		}
 
 		// Deleted copy operations
-		ThreadPool(const ThreadPool &) = delete;
-		ThreadPool &operator=(const ThreadPool &) = delete;
+		ThreadPool(const ThreadPool&) = delete;
+		ThreadPool& operator=(const ThreadPool&) = delete;
 
 	private:
 		/**
@@ -283,61 +288,200 @@ namespace HSLL
 		 */
 		unsigned int next_index() noexcept
 		{
-			return index.fetch_add(1, std::memory_order_relaxed) % workers.size();
+			return index.fetch_add(1, std::memory_order_relaxed) % threadNum;
 		}
 
 		/**
 		 * @brief Worker thread processing function
 		 */
-		static void worker(BlockQueue<T> &queue, unsigned batchSize) noexcept
+		void worker(unsigned int index, unsigned batchSize) noexcept
 		{
+			std::vector<BlockQueue<T>*> other;
+			other.reserve(threadNum - 1);
+
+			for (unsigned i = 0; i < threadNum; ++i)
+			{
+				if (i != index)
+					other.push_back(&queues[i]);
+			}
+
 			if (batchSize == 1)
 			{
-				process_single(queue);
+				process_single(std::ref(queues[index]), std::ref(other));
 			}
 			else
 			{
-				process_bulk(queue, batchSize);
+				process_bulk(std::ref(queues[index]), std::ref(other), batchSize);
 			}
 		}
 
 		/**
-		 * @brief  Processes tasks one at a time
+		 * @brief  Processes single task at a time
 		 */
-		static void process_single(BlockQueue<T> &queue) noexcept
+		static void process_single(BlockQueue<T>& queue, std::vector<BlockQueue<T>*>& other) noexcept
 		{
-			std::aligned_storage_t<sizeof(T), alignof(T)> storage;
-			T *task = (T *)(&storage);
-
-			while (queue.wait_pop(*task))
+			struct Stealer
 			{
-				task->execute();
-				task->~T();
-			}
-		}
+				unsigned int index;
+				unsigned int total;
+				unsigned int threshold;
+				std::vector<BlockQueue<T>*>& other;
 
-		/**
-		 * @brief  Processes tasks in batches
-		 */
-		static void process_bulk(BlockQueue<T> &queue, unsigned batchSize) noexcept
-		{
-			T *tasks = (T *)(::operator new[](batchSize * sizeof(T)));
-			assert(tasks && "Failed to allocate task buffer");
+				Stealer(std::vector<BlockQueue<T>*>& other, unsigned int maxLength)
+					:other(other), index(0), total(other.size()),
+					threshold(std::min(total, maxLength)) {}
+
+				bool steal(T& element)
+				{
+					for (int i = 0; i < total; ++i)
+					{
+						unsigned int now = (index + i) % total;
+						if (other[now]->size >= threshold)
+						{
+							if (other[now]->pop(element))
+							{
+								index = now;
+								return true;
+							}
+						}
+					}
+					return false;
+				}
+			};
+
+			typename std::aligned_storage<sizeof(T), alignof(T)>::type storage;
+			T* task = (T*)(&storage);
+			Stealer stealer(other, queue.maxSize);
+
+			if (!other.size())
+			{
+				while (queue.wait_pop(*task))
+				{
+					task->execute();
+					task->~T();
+				}
+
+				return;
+			}
 
 			while (true)
 			{
-				const unsigned count = queue.wait_popBulk(tasks, batchSize);
-				if (count == 0)
-					break;
-
-				for (unsigned i = 0; i < count; ++i)
+				while (queue.pop(*task))
 				{
-					tasks[i].execute();
-					tasks[i].~T();
+					task->execute();
+					task->~T();
+
+					if (queue.isStopped)
+						return;
+				}
+
+				if (stealer.steal(*task))
+				{
+					task->execute();
+					task->~T();
+				}
+				else
+				{
+					if (queue.wait_pop(*task, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT)))
+					{
+						task->execute();
+						task->~T();
+					}
+					else if (queue.isStopped)
+					{
+						return;
+					}
 				}
 			}
+		}
 
-			::operator delete[](tasks);
+		/**
+		* @brief  Execute multiple tasks at a time
+		*/
+		static inline void execute_tasks(T* tasks, unsigned int count)
+		{
+			for (unsigned int i = 0; i < count; ++i)
+			{
+				tasks[i].execute();
+				tasks[i].~T();
+			}
+		}
+
+		/**
+		 * @brief  Processes multiple tasks at a time
+		 */
+		static void process_bulk(BlockQueue<T>& queue, std::vector<BlockQueue<T>*>& other, unsigned batchSize) noexcept
+		{
+			struct Stealer
+			{
+				unsigned int index;
+				unsigned int total;
+				unsigned int batchSize;
+				unsigned int threshold;
+				std::vector<BlockQueue<T>*>& other;
+
+				Stealer(std::vector<BlockQueue<T>*>& other, unsigned int batchSize, unsigned int maxLength)
+					:other(other), index(0), total(other.size()), batchSize(batchSize),
+					threshold(std::min(batchSize* total, maxLength)) {}
+
+				unsigned int steal(T* elements)
+				{
+					for (int i = 0; i < total; ++i)
+					{
+						unsigned int now = (index + i) % total;
+						if (other[now]->size >= threshold)
+						{
+							unsigned int count = other[now]->popBulk(elements, batchSize);
+							if (count)
+							{
+								index = now;
+								return count;
+							}
+						}
+					}
+					return 0;
+				}
+			};
+
+			T* tasks = (T*)((void*)operator new[](batchSize * sizeof(T)));
+			assert(tasks && "Failed to allocate task buffer");
+			unsigned int count;
+			Stealer stealer(other, batchSize, queue.maxSize);
+
+			if (!other.size())
+			{
+				while (count = queue.wait_popBulk(tasks, batchSize))
+					execute_tasks(tasks, count);
+			}
+			else
+			{
+				while (true)
+				{
+					while (count = queue.popBulk(tasks, batchSize))
+					{
+						execute_tasks(tasks, count);
+
+						if (queue.isStopped)
+							break;
+					}
+
+					count = stealer.steal(tasks);
+					if (count)
+					{
+						execute_tasks(tasks, count);
+					}
+					else
+					{
+						count = queue.wait_popBulk(tasks, batchSize, std::chrono::milliseconds(HSLL_THREADPOOL_TIMEOUT));
+
+						if (count)
+							execute_tasks(tasks, count);
+						else if (queue.isStopped)
+							break;
+					}
+				}
+			}
+			operator delete[](tasks);
 		}
 	};
 }

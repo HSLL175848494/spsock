@@ -17,6 +17,15 @@ namespace HSLL
 #define UNLIKELY(x) (x)
 #endif
 
+#if defined(_WIN32)
+#include <malloc.h>
+#define ALIGNED_MALLOC(size, align) _aligned_malloc(size, align)
+#define ALIGNED_FREE(ptr) _aligned_free(ptr)
+#else
+#define ALIGNED_MALLOC(size, align) aligned_alloc(align, size)
+#define ALIGNED_FREE(ptr) free(ptr)
+#endif
+
 	/**
 	 * @brief Helper template for conditional object destruction
 	 * @tparam T Type of object to manage
@@ -148,7 +157,6 @@ namespace HSLL
 		// Synchronization primitives
 		std::mutex dataMutex;				  ///< Mutex protecting all queue operations
 		std::condition_variable notEmptyCond; ///< Signaled when data becomes available
-		std::condition_variable notFullCond;  ///< Signaled when space becomes available
 
 		template <class T>
 		friend class ThreadPool;
@@ -169,11 +177,9 @@ namespace HSLL
 			if (memoryBlock || capacity == 0)
 				return false;
 
-#if defined(_WIN32)
-			memoryBlock = _aligned_malloc(sizeof(Node) * capacity, 64);
-#else
-			memoryBlock = aligned_alloc(64, sizeof(Node) * capacity);
-#endif
+			unsigned int totalSize = sizeof(Node) * capacity;
+			totalSize = (totalSize + 64 - 1) & ~(64 - 1);
+			memoryBlock = ALIGNED_MALLOC(totalSize,64);
 
 			if (!memoryBlock)
 				return false;
@@ -357,15 +363,13 @@ namespace HSLL
 		}
 
 		/**
-		 * @brief Blocking element removal with indefinite wait
+		 * @brief Non-blocking element removal
 		 * @param element Reference to store popped element
-		 * @return true if element was retrieved, false if queue was stopped
+		 * @return true if element was retrieved, false if queue was empty
 		 */
-		bool wait_pop(TYPE &element)
+		bool pop(TYPE& element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
-			notEmptyCond.wait(lock, [this]
-							  { return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!size))
 				return false;
@@ -379,19 +383,97 @@ namespace HSLL
 		}
 
 		/**
+		 * @brief Blocking element removal with indefinite wait
+		 * @param element Reference to store popped element
+		 * @return true if element was retrieved, false if queue was stopped
+		 */
+		bool wait_pop(TYPE& element)
+		{
+			std::unique_lock<std::mutex> lock(dataMutex);
+			notEmptyCond.wait(lock, [this]
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!size))
+				return false;
+
+			size--;
+			element = std::move(dataListHead->data);
+			conditional_destroy(dataListHead->data);
+			dataListHead = dataListHead->next;
+			lock.unlock();
+			return true;
+		}
+
+		/**
+		 * @brief Blocking element removal with timeout
+		 * @tparam Rep Chrono duration representation type
+		 * @tparam Period Chrono duration period type
+		 * @param element Reference to store popped element
+		 * @param timeout Maximum time to wait for data
+		 * @return true if element was retrieved, false on timeout or stop
+		 */
+		template <class Rep, class Period>
+		bool wait_pop(TYPE& element, const std::chrono::duration<Rep, Period>& timeout)
+		{
+			std::unique_lock<std::mutex> lock(dataMutex);
+			bool success = notEmptyCond.wait_for(lock, timeout, [this]
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!success || !size))
+				return false;
+
+			size--;
+			element = std::move(dataListHead->data);
+			conditional_destroy(dataListHead->data);
+			dataListHead = dataListHead->next;
+			lock.unlock();
+			return true;
+		}
+
+		/**
+		 * @brief Bulk element retrieval
+		 * @param elements Array to store retrieved elements
+		 * @param count Maximum number of elements to retrieve
+		 * @return Actual number of elements retrieved
+		 */
+		unsigned int popBulk(TYPE* elements, unsigned int count)
+		{
+			if (UNLIKELY(count == 0))
+				return 0;
+
+			std::unique_lock<std::mutex> lock(dataMutex);
+			unsigned int available = size;
+
+			if (UNLIKELY(available == 0))
+				return 0;
+
+			unsigned int toPop = std::min(count, available);
+			for (unsigned int i = 0; i < toPop; ++i)
+			{
+				elements[i] = std::move(dataListHead->data);
+				conditional_destroy(dataListHead->data);
+				dataListHead = dataListHead->next;
+			}
+
+			size -= toPop;
+			lock.unlock();
+			return toPop;
+		}
+
+		/**
 		 * @brief Blocking bulk retrieval with indefinite wait
 		 * @param elements Array to store retrieved elements
 		 * @param count Maximum number of elements to retrieve
 		 * @return Actual number of elements retrieved before stop
 		 */
-		unsigned int wait_popBulk(TYPE *elements, unsigned int count)
+		unsigned int wait_popBulk(TYPE* elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notEmptyCond.wait(lock, [this]
-							  { return LIKELY(size) || UNLIKELY(isStopped); });
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!size))
 				return 0;
@@ -406,6 +488,43 @@ namespace HSLL
 
 			size -= toPop;
 			lock.unlock();
+
+			return toPop;
+		}
+
+		/**
+		 * @brief Blocking bulk retrieval with timeout
+		 * @tparam Rep Chrono duration representation type
+		 * @tparam Period Chrono duration period type
+		 * @param elements Array to store retrieved elements
+		 * @param count Maximum number of elements to retrieve
+		 * @param timeout Maximum time to wait for data
+		 * @return Actual number of elements retrieved
+		 */
+		template <class Rep, class Period>
+		unsigned int wait_popBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
+		{
+			if (UNLIKELY(count == 0))
+				return 0;
+
+			std::unique_lock<std::mutex> lock(dataMutex);
+			bool success = notEmptyCond.wait_for(lock, timeout, [this]
+				{ return LIKELY(size) || UNLIKELY(isStopped); });
+
+			if (UNLIKELY(!success || !size))
+				return 0;
+
+			unsigned int toPop = std::min(count, size);
+			for (unsigned int i = 0; i < toPop; ++i)
+			{
+				elements[i] = std::move(dataListHead->data);
+				conditional_destroy(dataListHead->data);
+				dataListHead = dataListHead->next;
+			}
+
+			size -= toPop;
+			lock.unlock();
+
 			return toPop;
 		}
 
@@ -421,7 +540,6 @@ namespace HSLL
 			}
 
 			notEmptyCond.notify_all();
-			notFullCond.notify_all();
 		}
 
 		/**
@@ -441,12 +559,7 @@ namespace HSLL
 					current = current->next;
 				}
 
-#if defined(_WIN32)
-				_aligned_free(memoryBlock);
-#else
-				free(memoryBlock);
-#endif
-
+				ALIGNED_FREE(memoryBlock);
 				isStopped = 0;
 				memoryBlock = nullptr;
 			}

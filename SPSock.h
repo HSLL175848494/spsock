@@ -73,8 +73,8 @@ namespace HSLL
         SPSockProc proc;                                     ///< User-defined callback functions
         SPSockAlive alive;                                   ///< Keep-alive parameters
         CloseList cList;                                     ///< Connections pending closure
-        std::vector<IOThreadInfo> loopInfo;                  ///< IO thread metadata
         std::vector<std::thread> loops;                      ///< IO event loop threads
+        std::vector<IOThreadInfo> loopInfo;                  ///< IO thread metadata
         std::unordered_map<int, SOCKController> connections; ///< Active connections map
 
         static std::atomic<bool> exitFlag;          ///< Event loop termination control
