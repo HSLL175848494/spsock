@@ -27,6 +27,28 @@ namespace HSLL
 #endif
 
 	/**
+	 * @brief Enumeration defining the method of bulk construction
+	 * This enum is used to specify whether bulk construction operations should use
+	 * copy semantics or move semantics when constructing objects.
+	 */
+	enum BULK_CMETHOD
+	{
+		COPY, ///< Use copy construction semantics
+		MOVE  ///< Use move construction semantics
+	};
+
+	/**
+	 * @brief Enumeration defining the method of element extraction during pop operations
+	 * This enum specifies how elements should be transferred from the queue to the caller
+	 * during pop operations.
+	 */
+	enum POP_METHOD
+	{
+		ASSIGN, ///< Use assignment operator for element transfer (efficient for movable types)
+		PLACE	///< Use placement new for element transfer (enables transfer of non-movable types)
+	};
+
+	/**
 	 * @brief Helper template for conditional object destruction
 	 * @tparam T Type of object to manage
 	 * @tparam IsTrivial Boolean indicating if type is trivially destructible
@@ -64,46 +86,34 @@ namespace HSLL
 	}
 
 	/**
-	 * @brief Enumeration defining the method of bulk construction
-	 * This enum is used to specify whether bulk construction operations should use
-	 * copy semantics or move semantics when constructing objects.
-	 */
-	enum BULK_CMETHOD
-	{
-		COPY, ///< Use copy construction semantics
-		MOVE  ///< Use move construction semantics
-	};
-
-	/**
 	 * @brief Helper template for bulk construction (copy/move)
 	 * @tparam T Type of object to construct
 	 * @tparam Method BULK_CONSTRUCT_METHOD selection
-	 * @tparam U Type of the source object
 	 */
-	template <typename T, BULK_CMETHOD Method, typename U>
+	template <typename T, BULK_CMETHOD Method>
 	struct BulkConstructHelper;
 
 	/**
-	 * @brief Specialization for copy construction from type U to T
+	 * @brief Specialization for copy construction
 	 */
-	template <typename T, typename U>
-	struct BulkConstructHelper<T, COPY, U>
+	template <typename T>
+	struct BulkConstructHelper<T, COPY>
 	{
-		static void construct(T *ptr, U &source)
+		static void construct(T &ptr, T &source)
 		{
-			new (ptr) T(source);
+			new (&ptr) T(source);
 		}
 	};
 
 	/**
-	 * @brief Specialization for move construction from type U to T
+	 * @brief Specialization for move construction
 	 */
-	template <typename T, typename U>
-	struct BulkConstructHelper<T, MOVE, U>
+	template <typename T>
+	struct BulkConstructHelper<T, MOVE>
 	{
-		static void construct(T *ptr, U &source)
+		static void construct(T &ptr, T &source)
 		{
-			new (ptr) T(std::move(source));
+			new (&ptr) T(std::move(source));
 		}
 	};
 
@@ -111,14 +121,66 @@ namespace HSLL
 	 * @brief Conditionally constructs an object using copy/move semantics
 	 * @tparam Method BULK_CONSTRUCT_METHOD selection
 	 * @tparam T Type of the object to construct
-	 * @tparam U Type of the source object
 	 * @param ptr Pointer to memory location where object should be constructed
 	 * @param source Source object reference for construction
 	 */
-	template <BULK_CMETHOD Method, typename T, typename U>
-	void bulk_construct(T *ptr, U &source)
+	template <BULK_CMETHOD Method, typename T>
+	void bulk_construct(T &ptr, T &source)
 	{
-		BulkConstructHelper<T, Method, U>::construct(ptr, source);
+		BulkConstructHelper<T, Method>::construct(ptr, source);
+	}
+
+	/**
+	 * @brief Helper template for conditional element extraction
+	 * @tparam T Type of object to extract
+	 * @tparam Method POP_METHOD selection
+	 * @details Provides extraction mechanism based on POP_METHOD:
+	 *          - For ASSIGN method: uses move assignment
+	 *          - For PLACE method: uses copy construction via placement new
+	 */
+	template <typename T, POP_METHOD Method>
+	struct PopHelper;
+
+	/**
+	 * @brief Specialization for assignment-based extraction
+	 * @tparam T Type of object to extract
+	 */
+	template <typename T>
+	struct PopHelper<T, ASSIGN>
+	{
+		static void extract(T &dest, T &src)
+		{
+			dest = std::move(src);
+		}
+	};
+
+	/**
+	 * @brief Specialization for placement-based extraction
+	 * @tparam T Type of object to extract
+	 */
+	template <typename T>
+	struct PopHelper<T, PLACE>
+	{
+		static void extract(T &dest, T &src)
+		{
+			new (&dest) T(std::move(src));
+		}
+	};
+
+	/**
+	 * @brief Conditionally extracts an element based on POP_METHOD
+	 * @tparam Method POP_METHOD selection
+	 * @tparam T Type of the object to extract
+	 * @param dest Reference to destination storage
+	 * @param src Reference to source element in queue
+	 * @details Uses PopHelper to determine extraction method:
+	 *          - ASSIGN: Efficient move assignment for movable types
+	 *          - PLACE: Safe copy-construction for non-movable types
+	 */
+	template <POP_METHOD Method, typename T>
+	void pop_extract(T &dest, T &src)
+	{
+		PopHelper<T, Method>::extract(dest, src);
 	}
 
 	/**
@@ -132,7 +194,7 @@ namespace HSLL
 	 *          - Efficient memory layout for cache locality
 	 */
 	template <class TYPE>
-	class BlockQueue
+	class TPBlockQueue
 	{
 	private:
 		struct Node
@@ -162,9 +224,9 @@ namespace HSLL
 		friend class ThreadPool;
 
 	public:
-		BlockQueue() : memoryBlock(nullptr), isStopped(0) {}
+		TPBlockQueue() : memoryBlock(nullptr), isStopped(0) {}
 
-		~BlockQueue() { release(); }
+		~TPBlockQueue() { release(); }
 
 		/**
 		 * @brief Initializes queue with fixed capacity
@@ -179,7 +241,7 @@ namespace HSLL
 
 			unsigned int totalSize = sizeof(Node) * capacity;
 			totalSize = (totalSize + 64 - 1) & ~(64 - 1);
-			memoryBlock = ALIGNED_MALLOC(totalSize,64);
+			memoryBlock = ALIGNED_MALLOC(totalSize, 64);
 
 			if (!memoryBlock)
 				return false;
@@ -218,87 +280,6 @@ namespace HSLL
 			lock.unlock();
 			notEmptyCond.notify_one();
 			return true;
-		}
-
-		/**
-		 * @brief Bulk construction from parameters array with specified method
-		 * @tparam METHOD BULK_CONSTRUCT_METHOD selection (copy/move)
-		 * @param packages Construction parameters array
-		 * @param count Maximum elements to construct
-		 * @return Actual number of elements constructed
-		 * @details Uses TYPE's constructor with parameter type PACKAGE. Construction
-		 *          method (copy/move) is determined by METHOD template parameter.
-		 */
-		template <BULK_CMETHOD METHOD = COPY, typename PACKAGE>
-		unsigned int emplaceBulk(PACKAGE *packages, unsigned int count)
-		{
-			if (UNLIKELY(count == 0))
-				return 0;
-
-			std::unique_lock<std::mutex> lock(dataMutex);
-			unsigned int available = maxSize - size;
-
-			if (UNLIKELY(available == 0))
-				return 0;
-
-			unsigned int toPush = std::min(count, available);
-			for (unsigned int i = 0; i < toPush; ++i)
-			{
-				bulk_construct<METHOD>(&dataListTail->data, packages[i]);
-				dataListTail = dataListTail->next;
-			}
-
-			size += toPush;
-			lock.unlock();
-
-			if (LIKELY(toPush > 0))
-			{
-				if (toPush == 1)
-					notEmptyCond.notify_one();
-				else
-					notEmptyCond.notify_all();
-			}
-
-			return toPush;
-		}
-
-		/**
-		 * @brief Non-blocking bulk default construction
-		 * @param count Number of default-constructed elements to create
-		 * @return Actual number of elements successfully created
-		 * @details Uses TYPE's default constructor. Fails immediately if queue
-		 *          lacks sufficient space. Notifies consumers appropriately.
-		 */
-		unsigned int emplaceBulk(unsigned int count)
-		{
-			if (UNLIKELY(count == 0))
-				return 0;
-
-			std::unique_lock<std::mutex> lock(dataMutex);
-			unsigned int available = maxSize - size;
-
-			if (UNLIKELY(available == 0))
-				return 0;
-
-			unsigned int toPush = std::min(count, available);
-			for (unsigned int i = 0; i < toPush; ++i)
-			{
-				new (&dataListTail->data) TYPE();
-				dataListTail = dataListTail->next;
-			}
-
-			size += toPush;
-			lock.unlock();
-
-			if (LIKELY(toPush > 0))
-			{
-				if (toPush == 1)
-					notEmptyCond.notify_one();
-				else
-					notEmptyCond.notify_all();
-			}
-
-			return toPush;
 		}
 
 		/**
@@ -347,7 +328,7 @@ namespace HSLL
 			unsigned int toPush = std::min(count, available);
 			for (unsigned int i = 0; i < toPush; ++i)
 			{
-				bulk_construct<METHOD>(&dataListTail->data, elements[i]);
+				bulk_construct<METHOD>(dataListTail->data, elements[i]);
 				dataListTail = dataListTail->next;
 			}
 
@@ -364,10 +345,12 @@ namespace HSLL
 
 		/**
 		 * @brief Non-blocking element removal
+		 * @tparam M METHOD POP_METHOD selection (assign/place)
 		 * @param element Reference to store popped element
 		 * @return true if element was retrieved, false if queue was empty
 		 */
-		bool pop(TYPE& element)
+		template <POP_METHOD M = ASSIGN>
+		bool pop(TYPE &element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 
@@ -375,7 +358,7 @@ namespace HSLL
 				return false;
 
 			size--;
-			element = std::move(dataListHead->data);
+			pop_extract<M>(element, dataListHead->data);
 			conditional_destroy(dataListHead->data);
 			dataListHead = dataListHead->next;
 			lock.unlock();
@@ -384,20 +367,22 @@ namespace HSLL
 
 		/**
 		 * @brief Blocking element removal with indefinite wait
+		 * @tparam M METHOD POP_METHOD selection (assign/place)
 		 * @param element Reference to store popped element
 		 * @return true if element was retrieved, false if queue was stopped
 		 */
-		bool wait_pop(TYPE& element)
+		template <POP_METHOD M = ASSIGN>
+		bool wait_pop(TYPE &element)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+							  { return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!size))
 				return false;
 
 			size--;
-			element = std::move(dataListHead->data);
+			pop_extract<M>(element, dataListHead->data);
 			conditional_destroy(dataListHead->data);
 			dataListHead = dataListHead->next;
 			lock.unlock();
@@ -406,24 +391,25 @@ namespace HSLL
 
 		/**
 		 * @brief Blocking element removal with timeout
+		 * @tparam M METHOD POP_METHOD selection (assign/place)
 		 * @tparam Rep Chrono duration representation type
 		 * @tparam Period Chrono duration period type
 		 * @param element Reference to store popped element
 		 * @param timeout Maximum time to wait for data
 		 * @return true if element was retrieved, false on timeout or stop
 		 */
-		template <class Rep, class Period>
-		bool wait_pop(TYPE& element, const std::chrono::duration<Rep, Period>& timeout)
+		template <POP_METHOD M = ASSIGN, class Rep, class Period>
+		bool wait_pop(TYPE &element, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			std::unique_lock<std::mutex> lock(dataMutex);
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+												 { return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || !size))
 				return false;
 
 			size--;
-			element = std::move(dataListHead->data);
+			pop_extract<M>(element, dataListHead->data);
 			conditional_destroy(dataListHead->data);
 			dataListHead = dataListHead->next;
 			lock.unlock();
@@ -432,11 +418,13 @@ namespace HSLL
 
 		/**
 		 * @brief Bulk element retrieval
+		 * @tparam M METHOD POP_METHOD selection (assign/place)
 		 * @param elements Array to store retrieved elements
 		 * @param count Maximum number of elements to retrieve
 		 * @return Actual number of elements retrieved
 		 */
-		unsigned int popBulk(TYPE* elements, unsigned int count)
+		template <POP_METHOD M = ASSIGN>
+		unsigned int popBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
@@ -450,7 +438,7 @@ namespace HSLL
 			unsigned int toPop = std::min(count, available);
 			for (unsigned int i = 0; i < toPop; ++i)
 			{
-				elements[i] = std::move(dataListHead->data);
+				pop_extract<M>(elements[i], dataListHead->data);
 				conditional_destroy(dataListHead->data);
 				dataListHead = dataListHead->next;
 			}
@@ -462,18 +450,20 @@ namespace HSLL
 
 		/**
 		 * @brief Blocking bulk retrieval with indefinite wait
+		 * @tparam M METHOD POP_METHOD selection (assign/place)
 		 * @param elements Array to store retrieved elements
 		 * @param count Maximum number of elements to retrieve
 		 * @return Actual number of elements retrieved before stop
 		 */
-		unsigned int wait_popBulk(TYPE* elements, unsigned int count)
+		template <POP_METHOD M = ASSIGN>
+		unsigned int wait_popBulk(TYPE *elements, unsigned int count)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 			notEmptyCond.wait(lock, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+							  { return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!size))
 				return 0;
@@ -481,19 +471,19 @@ namespace HSLL
 			unsigned int toPop = std::min(count, size);
 			for (unsigned int i = 0; i < toPop; ++i)
 			{
-				elements[i] = std::move(dataListHead->data);
+				pop_extract<M>(elements[i], dataListHead->data);
 				conditional_destroy(dataListHead->data);
 				dataListHead = dataListHead->next;
 			}
 
 			size -= toPop;
 			lock.unlock();
-
 			return toPop;
 		}
 
 		/**
 		 * @brief Blocking bulk retrieval with timeout
+		 * @tparam M METHOD POP_METHOD selection (assign/place)
 		 * @tparam Rep Chrono duration representation type
 		 * @tparam Period Chrono duration period type
 		 * @param elements Array to store retrieved elements
@@ -501,15 +491,15 @@ namespace HSLL
 		 * @param timeout Maximum time to wait for data
 		 * @return Actual number of elements retrieved
 		 */
-		template <class Rep, class Period>
-		unsigned int wait_popBulk(TYPE* elements, unsigned int count, const std::chrono::duration<Rep, Period>& timeout)
+		template <POP_METHOD M = ASSIGN, class Rep, class Period>
+		unsigned int wait_popBulk(TYPE *elements, unsigned int count, const std::chrono::duration<Rep, Period> &timeout)
 		{
 			if (UNLIKELY(count == 0))
 				return 0;
 
 			std::unique_lock<std::mutex> lock(dataMutex);
 			bool success = notEmptyCond.wait_for(lock, timeout, [this]
-				{ return LIKELY(size) || UNLIKELY(isStopped); });
+												 { return LIKELY(size) || UNLIKELY(isStopped); });
 
 			if (UNLIKELY(!success || !size))
 				return 0;
@@ -517,14 +507,13 @@ namespace HSLL
 			unsigned int toPop = std::min(count, size);
 			for (unsigned int i = 0; i < toPop; ++i)
 			{
-				elements[i] = std::move(dataListHead->data);
+				pop_extract<M>(elements[i], dataListHead->data);
 				conditional_destroy(dataListHead->data);
 				dataListHead = dataListHead->next;
 			}
 
 			size -= toPop;
 			lock.unlock();
-
 			return toPop;
 		}
 
@@ -566,8 +555,8 @@ namespace HSLL
 		}
 
 		// Disable copying
-		BlockQueue(const BlockQueue &) = delete;
-		BlockQueue &operator=(const BlockQueue &) = delete;
+		TPBlockQueue(const TPBlockQueue &) = delete;
+		TPBlockQueue &operator=(const TPBlockQueue &) = delete;
 	};
 }
 #endif // HSLL_TPBLOCKQUEUE
